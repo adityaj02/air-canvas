@@ -2,7 +2,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
-const { ExpressPeerServer } = require("peer"); // Add Peer Server
+const { ExpressPeerServer } = require("peer");
 
 const app = express();
 app.use(cors());
@@ -12,15 +12,16 @@ const server = http.createServer(app);
 // SETUP PEER SERVER
 const peerServer = ExpressPeerServer(server, {
   debug: true,
+  path: "/"
 });
 app.use("/peerjs", peerServer);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: "*", // CRITICAL FIX: Allows Vercel (or any site) to connect
     methods: ["GET", "POST"],
   },
-  transports: ["websocket"],
+  transports: ["websocket", "polling"], // Added polling as backup for better stability
   perMessageDeflate: false
 });
 
@@ -29,19 +30,21 @@ io.on("connection", (socket) => {
 
   // JOIN ROOM WITH PEER ID
   socket.on("join_room", (data) => {
-    // data might be string (old) or object (new: {room, peerId})
+    // Handle both formats: simple string or object {room, peerId}
     const roomId = data.room || data; 
     const peerId = data.peerId;
 
     socket.join(roomId);
+    console.log(`User ${socket.id} joined room: ${roomId}`);
     
-    // Broadcast to others that a new user connected (so they can call him)
+    // Broadcast to others that a new user connected (for video call)
     if (peerId) {
         socket.to(roomId).emit("user_connected", peerId);
     }
   });
 
   socket.on("draw_line", (data) => {
+    // Using volatile for drawing prevents lag if network is slow
     socket.to(data.room).volatile.emit("receive_draw", data);
   });
 
@@ -50,6 +53,8 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(3001, () => {
-  console.log("SERVER RUNNING ON PORT 3001");
+// CRITICAL FIX: Use Render's port if available, otherwise 3001
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`SERVER RUNNING ON PORT ${PORT}`);
 });
