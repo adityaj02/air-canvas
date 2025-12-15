@@ -1,14 +1,16 @@
 body {
   margin: 0;
+  padding: 0;
   overflow: hidden;
-  background: black;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
 }
 
 /* Video container for 21:9 aspect ratio */
 .video-container {
   position: fixed;
   width: 100vw;
-  height: calc(100vw * 9 / 21); /* 21:9 aspect ratio */
+  height: calc(100vw * 9 / 21);
   max-height: 100vh;
   max-width: calc(100vh * 21 / 9);
   top: 50%;
@@ -16,90 +18,281 @@ body {
   transform: translate(-50%, -50%);
   overflow: hidden;
   z-index: 1;
-  background: black;
+  background: #000;
+  border-radius: 10px;
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.8);
 }
 
 .main-video-feed {
   width: 100%;
   height: 100%;
-  object-fit: cover; /* Changed from contain for better video framing */
-  background: black;
+  object-fit: cover;
+  background: #000;
 }
 
 /* Canvas overlay matching 21:9 aspect ratio */
 .canvas-overlay {
   position: fixed;
   width: 100vw;
-  height: calc(100vw * 9 / 21); /* 21:9 aspect ratio */
+  height: calc(100vw * 9 / 21);
   max-height: 100vh;
   max-width: calc(100vh * 21 / 9);
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 2;
-  pointer-events: none; /* Keep this as none since we handle coordinates in code */
+  pointer-events: none;
   background: transparent;
+  cursor: crosshair;
 }
 
+/* Control Panel */
+.control-panel {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 50px;
+  padding: 15px 25px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  align-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.color-picker {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.color-btn {
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.color-btn:hover {
+  transform: scale(1.15);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.color-btn.active {
+  border-color: white;
+  transform: scale(1.2);
+  box-shadow: 0 0 15px currentColor;
+}
+
+.control-buttons {
+  display: flex;
+  gap: 15px;
+}
+
+.control-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 25px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.control-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+.control-btn:active {
+  transform: translateY(0);
+}
+
+.clear-btn {
+  background: linear-gradient(135deg, #ff4d4d 0%, #ff3333 100%);
+  box-shadow: 0 4px 15px rgba(255, 77, 77, 0.4);
+}
+
+.clear-btn:hover {
+  box-shadow: 0 6px 20px rgba(255, 77, 77, 0.6);
+}
+
+.switch-btn {
+  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+}
+
+.switch-btn:hover {
+  box-shadow: 0 6px 20px rgba(76, 175, 80, 0.6);
+}
+
+/* Drawing Status Indicator */
+.drawing-status {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  padding: 12px 25px;
+  border-radius: 25px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: white;
+  font-weight: 500;
+  font-size: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.drawing-status.drawing {
+  border-color: #4CAF50;
+  box-shadow: 0 0 20px rgba(76, 175, 80, 0.5);
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff4d4d;
+  transition: all 0.3s ease;
+}
+
+.drawing-status.drawing .status-dot {
+  background: #4CAF50;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+/* Room Info */
+.room-info {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  padding: 12px 20px;
+  border-radius: 25px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  color: white;
+  font-weight: 500;
+  font-size: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.leave-btn {
+  padding: 6px 15px;
+  border: none;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #ff4d4d 0%, #ff3333 100%);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 12px;
+}
+
+.leave-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 15px rgba(255, 77, 77, 0.4);
+}
+
+/* Join Screen */
 .join-screen {
   position: fixed;
   inset: 0;
   display: flex;
   justify-content: center;
   align-items: center;
-  background: #111;
-  z-index: 10;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  z-index: 1000;
 }
 
 .join-card {
-  background: #222;
-  padding: 30px;
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 40px;
+  border-radius: 20px;
   text-align: center;
-  color: white;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 400px;
+  backdrop-filter: blur(10px);
 }
 
 .join-card h2 {
-  margin: 0 0 20px 0;
-  color: #ff4d4d;
-  font-size: 2rem;
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 2.5rem;
+}
+
+.join-card p {
+  color: #666;
+  margin-bottom: 30px;
+  font-size: 1rem;
 }
 
 .join-card input {
-  width: 80%;
-  padding: 12px 15px;
+  width: 100%;
+  padding: 15px 20px;
   margin: 10px 0;
-  border: 2px solid #444;
-  border-radius: 6px;
-  background: #333;
-  color: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 50px;
+  background: white;
+  color: #333;
   font-size: 1rem;
   outline: none;
-  transition: border-color 0.3s;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
 }
 
 .join-card input:focus {
-  border-color: #ff4d4d;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
 .join-card button {
-  width: 85%;
-  padding: 12px 15px;
-  margin-top: 10px;
-  background: #ff4d4d;
+  width: 100%;
+  padding: 15px 20px;
+  margin-top: 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
-  border-radius: 6px;
+  border-radius: 50px;
   font-size: 1.1rem;
-  font-weight: bold;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.3s, transform 0.2s;
+  transition: all 0.3s ease;
+  box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
 }
 
 .join-card button:hover {
-  background: #ff3333;
   transform: translateY(-2px);
+  box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
 }
 
 .join-card button:active {
@@ -123,20 +316,35 @@ body {
   }
 }
 
-/* For very narrow screens */
 @media (max-width: 768px) {
+  .control-panel {
+    bottom: 10px;
+    padding: 12px 20px;
+    border-radius: 40px;
+  }
+  
+  .color-btn {
+    width: 30px;
+    height: 30px;
+  }
+  
+  .control-btn {
+    padding: 8px 15px;
+    font-size: 12px;
+  }
+  
+  .drawing-status,
+  .room-info {
+    font-size: 12px;
+    padding: 8px 15px;
+  }
+  
   .join-card {
-    padding: 20px;
-    width: 90%;
-    max-width: 400px;
+    padding: 30px 20px;
+    margin: 20px;
   }
   
   .join-card h2 {
-    font-size: 1.5rem;
-  }
-  
-  .join-card input,
-  .join-card button {
-    font-size: 0.9rem;
+    font-size: 2rem;
   }
 }

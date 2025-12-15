@@ -20,6 +20,7 @@ function App() {
   const [penColor, setPenColor] = useState("#ff4d4d");
   const [remoteStreamObj, setRemoteStreamObj] = useState(null);
   const [mainView, setMainView] = useState("local");
+  const [isDrawing, setIsDrawing] = useState(false);
 
   const prevPoint = useRef(null);
   const peerRef = useRef(null);
@@ -27,12 +28,24 @@ function App() {
   const cameraRef = useRef(null);
   const colorRef = useRef(penColor);
   const lastEmitRef = useRef(0);
-
-  // Add state for screen dimensions
-  const [screenDimensions, setScreenDimensions] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight
+  const drawingAreaRef = useRef({
+    width: 0,
+    height: 0,
+    offsetX: 0,
+    offsetY: 0
   });
+
+  // Color options
+  const colorOptions = [
+    "#ff4d4d", // Red
+    "#4dff4d", // Green
+    "#4d4dff", // Blue
+    "#ffff4d", // Yellow
+    "#ff4dff", // Pink
+    "#4dffff", // Cyan
+    "#ffffff", // White
+    "#000000"  // Black
+  ];
 
   useEffect(() => {
     colorRef.current = penColor;
@@ -67,15 +80,13 @@ function App() {
       canvasRef.current.width = canvasWidth;
       canvasRef.current.height = canvasHeight;
       
-      // Store drawing area info for coordinate conversion
-      canvasRef.current._drawArea = { offsetX, offsetY, canvasWidth, canvasHeight };
-      
-      setScreenDimensions({
-        width: canvasWidth,
-        height: canvasHeight,
-        offsetX,
-        offsetY
-      });
+      // Store drawing area info
+      drawingAreaRef.current = { 
+        width: canvasWidth, 
+        height: canvasHeight, 
+        offsetX, 
+        offsetY 
+      };
     };
     
     resize();
@@ -105,6 +116,9 @@ function App() {
       navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
         call.answer(stream);
         call.on("stream", (remoteStream) => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+          }
           setRemoteStreamObj(remoteStream);
           setMainView("remote");
         });
@@ -130,28 +144,42 @@ function App() {
       MEDIAPIPE HANDS
   ======================= */
   const startMediaPipe = async () => {
-    while (!window.Hands) await new Promise(r => setTimeout(r, 300));
+    // Load MediaPipe hands
+    if (!window.Hands) {
+      const script = document.createElement('script');
+      script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
+      script.onload = () => initializeHands();
+      document.head.appendChild(script);
+    } else {
+      initializeHands();
+    }
+  };
 
+  const initializeHands = () => {
     const hands = new window.Hands({
-      locateFile: (f) => `https://unpkg.com/@mediapipe/hands/${f}`,
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+      }
     });
 
     hands.setOptions({
       maxNumHands: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
     });
 
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    // Changed to 21:9 aspect ratio (1680x720)
     const camera = new window.Camera(webcamRef.current.video, {
       onFrame: async () => {
-        await hands.send({ image: webcamRef.current.video });
+        if (handsRef.current) {
+          await handsRef.current.send({ image: webcamRef.current.video });
+        }
       },
-      width: 1680,  // 21:9 width
-      height: 720,  // 21:9 height
+      width: 1680,
+      height: 720,
     });
 
     camera.start();
@@ -159,11 +187,12 @@ function App() {
   };
 
   /* =======================
-      DRAWING LOGIC (Updated for 21:9 aspect ratio)
+      DRAWING LOGIC
   ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
       prevPoint.current = null;
+      setIsDrawing(false);
       return;
     }
 
@@ -175,32 +204,37 @@ function App() {
     const index = lm[8];
     const thumb = lm[4];
 
+    // Calculate pinch distance
     const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+    
     if (pinch > 0.08) {
+      // Not pinching - stop drawing
       prevPoint.current = null;
+      setIsDrawing(false);
       return;
     }
 
-    // Convert normalized coordinates to 21:9 drawing area
-    const { offsetX, offsetY, canvasWidth, canvasHeight } = screenDimensions;
+    // Pinching - start drawing
+    setIsDrawing(true);
     
-    // Convert MediaPipe coordinates (0-1) to our 21:9 canvas coordinates
-    const x = (1 - index.x) * canvasWidth + offsetX;
-    const y = index.y * canvasHeight + offsetY;
+    // Get drawing area dimensions
+    const { width, height, offsetX, offsetY } = drawingAreaRef.current;
+    
+    // Convert normalized coordinates to canvas coordinates
+    const x = (1 - index.x) * width + offsetX;
+    const y = index.y * height + offsetY;
 
     if (prevPoint.current) {
-      const nx = lerp(prevPoint.current.x, x, 0.25);
-      const ny = lerp(prevPoint.current.y, y, 0.25);
+      const nx = lerp(prevPoint.current.x, x, 0.3);
+      const ny = lerp(prevPoint.current.y, y, 0.3);
 
       const payload = {
         room,
-        x1: prevPoint.current.x - offsetX, // Remove offset for drawing
+        x1: prevPoint.current.x - offsetX,
         y1: prevPoint.current.y - offsetY,
         x2: nx - offsetX,
         y2: ny - offsetY,
         color: colorRef.current,
-        offsetX,
-        offsetY
       };
 
       drawLine(payload);
@@ -211,11 +245,14 @@ function App() {
     }
   };
 
-  const drawLine = ({ x1, y1, x2, y2, color, offsetX = 0, offsetY = 0 }) => {
-    const ctx = canvasRef.current.getContext("2d");
+  const drawLine = ({ x1, y1, x2, y2, color }) => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+
     ctx.strokeStyle = color;
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 8;
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
@@ -223,23 +260,48 @@ function App() {
   };
 
   const clearCanvasLocal = () => {
-    const ctx = canvasRef.current.getContext("2d");
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return;
+    
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const clearCanvas = () => {
+    clearCanvasLocal();
+    socket.emit("clear_canvas", { room });
   };
 
   const callUser = (peerId) => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      peerRef.current.call(peerId, stream).on("stream", setRemoteStreamObj);
+      peerRef.current.call(peerId, stream).on("stream", (remoteStream) => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream;
+        }
+        setRemoteStreamObj(remoteStream);
+        setMainView("remote");
+      });
     });
+  };
+
+  const switchView = () => {
+    setMainView(prev => prev === "local" ? "remote" : "local");
   };
 
   if (!joined) {
     return (
       <div className="join-screen">
         <div className="join-card">
-          <h2>Air Canvas</h2>
-          <input placeholder="Room ID" onChange={(e) => setRoom(e.target.value)} />
-          <button onClick={() => setJoined(true)}>Start</button>
+          <h2>✏️ Air Canvas</h2>
+          <p>Join or create a room to start drawing</p>
+          <input 
+            placeholder="Enter Room ID" 
+            value={room}
+            onChange={(e) => setRoom(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && setJoined(true)}
+          />
+          <button onClick={() => room.trim() ? setJoined(true) : alert("Please enter a room ID")}>
+            Start Drawing
+          </button>
         </div>
       </div>
     );
@@ -247,13 +309,21 @@ function App() {
 
   return (
     <>
+      {/* Canvas for drawing */}
       <canvas ref={canvasRef} className="canvas-overlay" />
+      
+      {/* Video Container */}
       <div className="video-container">
         {mainView === "local" ? (
           <Webcam 
             ref={webcamRef} 
             mirrored 
             className="main-video-feed" 
+            videoConstraints={{
+              width: 1680,
+              height: 720,
+              aspectRatio: 21/9
+            }}
           />
         ) : (
           <video 
@@ -263,6 +333,42 @@ function App() {
             className="main-video-feed" 
           />
         )}
+      </div>
+
+      {/* Control Panel */}
+      <div className="control-panel">
+        <div className="color-picker">
+          {colorOptions.map((color) => (
+            <button
+              key={color}
+              className={`color-btn ${penColor === color ? 'active' : ''}`}
+              style={{ backgroundColor: color }}
+              onClick={() => setPenColor(color)}
+              title={`Select ${color}`}
+            />
+          ))}
+        </div>
+        
+        <div className="control-buttons">
+          <button className="control-btn clear-btn" onClick={clearCanvas} title="Clear Canvas">
+            🗑️ Clear
+          </button>
+          <button className="control-btn switch-btn" onClick={switchView} title="Switch View">
+            {mainView === "local" ? "👁️ View Remote" : "👁️ View Self"}
+          </button>
+        </div>
+      </div>
+
+      {/* Drawing Status Indicator */}
+      <div className={`drawing-status ${isDrawing ? 'drawing' : ''}`}>
+        <div className="status-dot"></div>
+        <span>{isDrawing ? "Drawing..." : "Pinch to draw"}</span>
+      </div>
+
+      {/* Room Info */}
+      <div className="room-info">
+        <span>Room: {room}</span>
+        <button className="leave-btn" onClick={() => setJoined(false)}>Leave</button>
       </div>
     </>
   );
