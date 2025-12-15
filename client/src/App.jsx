@@ -28,19 +28,56 @@ function App() {
   const colorRef = useRef(penColor);
   const lastEmitRef = useRef(0);
 
+  // Add state for screen dimensions
+  const [screenDimensions, setScreenDimensions] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight
+  });
+
   useEffect(() => {
     colorRef.current = penColor;
   }, [penColor]);
 
   /* =======================
-      FULLSCREEN CANVAS
+      FULLSCREEN CANVAS with 21:9 Aspect Ratio
   ======================= */
   useEffect(() => {
     const resize = () => {
       if (!canvasRef.current) return;
-      canvasRef.current.width = window.innerWidth;
-      canvasRef.current.height = window.innerHeight;
+      
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const targetAspectRatio = 21/9;
+      const currentAspectRatio = width / height;
+      
+      let canvasWidth, canvasHeight, offsetX = 0, offsetY = 0;
+      
+      if (currentAspectRatio > targetAspectRatio) {
+        // Screen is wider than 21:9
+        canvasHeight = height;
+        canvasWidth = height * targetAspectRatio;
+        offsetX = (width - canvasWidth) / 2;
+      } else {
+        // Screen is taller than 21:9
+        canvasWidth = width;
+        canvasHeight = width / targetAspectRatio;
+        offsetY = (height - canvasHeight) / 2;
+      }
+      
+      canvasRef.current.width = canvasWidth;
+      canvasRef.current.height = canvasHeight;
+      
+      // Store drawing area info for coordinate conversion
+      canvasRef.current._drawArea = { offsetX, offsetY, canvasWidth, canvasHeight };
+      
+      setScreenDimensions({
+        width: canvasWidth,
+        height: canvasHeight,
+        offsetX,
+        offsetY
+      });
     };
+    
     resize();
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
@@ -108,12 +145,13 @@ function App() {
     hands.onResults(onResults);
     handsRef.current = hands;
 
+    // Changed to 21:9 aspect ratio (1680x720)
     const camera = new window.Camera(webcamRef.current.video, {
       onFrame: async () => {
         await hands.send({ image: webcamRef.current.video });
       },
-      width: 1280,
-      height: 720,
+      width: 1680,  // 21:9 width
+      height: 720,  // 21:9 height
     });
 
     camera.start();
@@ -121,7 +159,7 @@ function App() {
   };
 
   /* =======================
-      DRAWING LOGIC
+      DRAWING LOGIC (Updated for 21:9 aspect ratio)
   ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
@@ -143,8 +181,12 @@ function App() {
       return;
     }
 
-    const x = (1 - index.x) * window.innerWidth;
-    const y = index.y * window.innerHeight;
+    // Convert normalized coordinates to 21:9 drawing area
+    const { offsetX, offsetY, canvasWidth, canvasHeight } = screenDimensions;
+    
+    // Convert MediaPipe coordinates (0-1) to our 21:9 canvas coordinates
+    const x = (1 - index.x) * canvasWidth + offsetX;
+    const y = index.y * canvasHeight + offsetY;
 
     if (prevPoint.current) {
       const nx = lerp(prevPoint.current.x, x, 0.25);
@@ -152,11 +194,13 @@ function App() {
 
       const payload = {
         room,
-        x1: prevPoint.current.x,
-        y1: prevPoint.current.y,
-        x2: nx,
-        y2: ny,
+        x1: prevPoint.current.x - offsetX, // Remove offset for drawing
+        y1: prevPoint.current.y - offsetY,
+        x2: nx - offsetX,
+        y2: ny - offsetY,
         color: colorRef.current,
+        offsetX,
+        offsetY
       };
 
       drawLine(payload);
@@ -167,7 +211,7 @@ function App() {
     }
   };
 
-  const drawLine = ({ x1, y1, x2, y2, color }) => {
+  const drawLine = ({ x1, y1, x2, y2, color, offsetX = 0, offsetY = 0 }) => {
     const ctx = canvasRef.current.getContext("2d");
     ctx.strokeStyle = color;
     ctx.lineWidth = 6;
@@ -204,11 +248,22 @@ function App() {
   return (
     <>
       <canvas ref={canvasRef} className="canvas-overlay" />
-      {mainView === "local" ? (
-        <Webcam ref={webcamRef} mirrored className="main-video-feed" />
-      ) : (
-        <video ref={remoteVideoRef} autoPlay playsInline className="main-video-feed" />
-      )}
+      <div className="video-container">
+        {mainView === "local" ? (
+          <Webcam 
+            ref={webcamRef} 
+            mirrored 
+            className="main-video-feed" 
+          />
+        ) : (
+          <video 
+            ref={remoteVideoRef} 
+            autoPlay 
+            playsInline 
+            className="main-video-feed" 
+          />
+        )}
+      </div>
     </>
   );
 }
