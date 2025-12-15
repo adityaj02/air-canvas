@@ -160,6 +160,11 @@ function App() {
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
   };
 
+  const broadcastClear = () => {
+    clearCanvasLocal();
+    socket.emit("clear_canvas", { room });
+  };
+
   const callUser = (peerId) => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then((stream) => {
@@ -178,7 +183,10 @@ function App() {
       <div className="join-screen">
         <div className="join-card">
           <h2>Air Canvas</h2>
-          <input placeholder="Enter Room ID" onChange={(e) => setRoom(e.target.value)} />
+          <input 
+            placeholder="Enter Room ID" 
+            onChange={(e) => setRoom(e.target.value)} 
+          />
           <button onClick={() => setJoined(true)}>Start</button>
         </div>
       </div>
@@ -190,16 +198,30 @@ function App() {
   ========================= */
   return (
     <div className="main-container">
-
+      {/* TOP BAR WITH CLEAR BUTTON */}
       <div className="top-bar">
         <div className="logo">Air Canvas</div>
-        <div className="right">
-          <input type="color" value={penColor}
+
+        <div className="top-actions">
+          <input
+            type="color"
+            value={penColor}
             onChange={(e) => setPenColor(e.target.value)}
-            className="color-picker" />
+            className="color-picker"
+            title="Pen color"
+          />
+
+          <button
+            className="clear-btn"
+            onClick={broadcastClear}
+            title="Clear canvas"
+          >
+            Clear
+          </button>
         </div>
       </div>
 
+      {/* MAIN STAGE */}
       <div className="stage">
         {/* MAIN */}
         <div className="stage-main">
