@@ -1,9 +1,9 @@
 body {
   margin: 0;
-  background: #121212;
-  color: #fff;
-  font-family: 'Segoe UI', sans-serif;
-  overflow: hidden; /* Prevent scrolling */
+  background: #111;
+  color: white;
+  font-family: sans-serif;
+  overflow: hidden;
 }
 
 .main-container {
@@ -12,98 +12,72 @@ body {
   flex-direction: column;
 }
 
-/* =========================
-   JOIN SCREEN
-========================= */
+/* --- JOIN SCREEN --- */
 .join-screen {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at center, #1f1f1f, #000);
+  background: #111;
   z-index: 100;
 }
-
 .join-card {
-  width: 320px;
+  background: #222;
   padding: 30px;
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 12px;
+  border-radius: 10px;
   text-align: center;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  border: 1px solid #333;
 }
-
 .join-card input {
+  display: block;
   width: 100%;
-  padding: 12px;
   margin: 15px 0;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  color: white;
-  border-radius: 6px;
-  box-sizing: border-box;
+  padding: 10px;
+  border-radius: 5px;
+  border: none;
 }
-
 .join-card button {
   width: 100%;
-  padding: 12px;
+  padding: 10px;
   background: #007bff;
   color: white;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   font-weight: bold;
 }
 
-/* =========================
-   TOP BAR
-========================= */
+/* --- TOP BAR --- */
 .top-bar {
   height: 60px;
+  background: #1a1a1a;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 20px;
-  background: #1a1a1a;
   border-bottom: 1px solid #333;
 }
-
-.logo {
-  font-size: 1.2rem;
-  font-weight: bold;
-  letter-spacing: 1px;
-}
-
-.top-actions {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
 .color-picker {
   width: 30px;
   height: 30px;
-  border: 2px solid #555;
   border-radius: 50%;
-  padding: 0;
+  border: 2px solid #555;
   cursor: pointer;
+  padding: 0;
   background: none;
+  margin-right: 15px;
 }
-
 .clear-btn {
-  padding: 8px 16px;
-  background: #e74c3c;
+  background: #dc3545;
   color: white;
   border: none;
-  border-radius: 4px;
+  padding: 8px 16px;
+  border-radius: 5px;
   cursor: pointer;
 }
 
-/* =========================
-   STAGE AREA (14-15 Inch Simulation)
-========================= */
+/* --- STAGE (The "Laptop Screen") --- */
 .stage-container {
   flex: 1;
   display: flex;
@@ -113,114 +87,69 @@ body {
   padding: 20px;
 }
 
-/* This wrapper simulates the laptop screen size */
 .stage-wrapper {
   position: relative;
+  /* Force 16:9 Aspect Ratio (HD Laptop standard) */
   width: 100%;
-  max-width: 960px; /* Approx 14-15 inch width in pixels */
-  aspect-ratio: 4/3; /* Standard webcam ratio */
-  background: #222;
-  border: 1px solid #444;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 0 20px rgba(0,0,0,0.8);
-}
-
-/* =========================
-   VIDEO LAYERS
-========================= */
-.main-view {
-  width: 100%;
-  height: 100%;
-  position: relative;
-}
-
-.video-content {
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
-}
-
-.video-content.hidden {
-  display: none;
-}
-
-.video-content.visible {
-  display: block;
-}
-
-.video-feed {
-  width: 100%;
-  height: 100%;
-  object-fit: cover; /* Ensures no black bars */
-}
-
-/* =========================
-   PIP VIEW (Swappable)
-========================= */
-.pip-view {
-  position: absolute;
-  bottom: 20px;
-  right: 20px;
-  width: 200px;
-  height: 150px;
-  border: 2px solid #fff;
-  border-radius: 8px;
-  overflow: hidden;
+  max-width: 1100px; /* Limits size to look like a screen */
+  aspect-ratio: 16/9;
   background: #000;
-  cursor: pointer;
-  transition: transform 0.2s;
-  z-index: 20;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+  border: 2px solid #333;
+  border-radius: 8px;
+  overflow: hidden; /* Crops video that overflows */
+  box-shadow: 0 0 30px rgba(0,0,0,0.5);
 }
 
-.pip-view:hover {
-  transform: scale(1.05);
-  border-color: #007bff;
+/* --- VIDEO & CANVAS LAYERS --- */
+.main-video-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: fill; /* CRITICAL: Forces video to stretch to edges */
 }
 
-/* =========================
-   CANVAS OVERLAY
-========================= */
 .canvas-overlay {
   position: absolute;
   top: 0;
   left: 0;
+  width: 100%; /* CRITICAL: Forces canvas to cover entire video */
+  height: 100%;
+  z-index: 10; /* Sits on top of main video */
+  pointer-events: none; /* Allows clicks to pass through to buttons */
+}
+
+/* --- PiP (Picture in Picture) --- */
+.pip-box {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 240px;
+  height: 135px; /* 16:9 ratio */
+  border: 2px solid white;
+  border-radius: 8px;
+  background: black;
+  cursor: pointer;
+  z-index: 20; /* Highest layer, clickable */
+  overflow: hidden;
+  transition: transform 0.2s;
+}
+
+.pip-box:hover {
+  transform: scale(1.05);
+  border-color: #007bff;
+}
+
+.pip-feed {
   width: 100%;
   height: 100%;
-  z-index: 10; /* Above main video, below PiP */
-  pointer-events: none; /* Let clicks pass through */
+  object-fit: cover;
 }
 
-/* =========================
-   LABELS & TEXT
-========================= */
-.label {
+.pip-label {
   position: absolute;
-  bottom: 10px;
-  left: 10px;
-  background: rgba(0,0,0,0.6);
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  z-index: 5;
-}
-
-.waiting-msg {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: #888;
-  font-size: 1.2rem;
-}
-
-.footer {
+  bottom: 0;
+  width: 100%;
+  background: rgba(0,0,0,0.7);
+  font-size: 10px;
   text-align: center;
-  padding: 10px;
-  background: #111;
-  font-size: 0.8rem;
-  color: #666;
+  padding: 2px 0;
 }
