@@ -14,6 +14,7 @@ function App() {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const containerRef = useRef(null);
 
   const [room, setRoom] = useState("");
   const [joined, setJoined] = useState(false);
@@ -21,6 +22,7 @@ function App() {
   const [remoteStreamObj, setRemoteStreamObj] = useState(null);
   const [mainView, setMainView] = useState("local");
   const [isDrawing, setIsDrawing] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0, top: 0, left: 0 });
 
   const prevPoint = useRef(null);
   const peerRef = useRef(null);
@@ -28,12 +30,6 @@ function App() {
   const cameraRef = useRef(null);
   const colorRef = useRef(penColor);
   const lastEmitRef = useRef(0);
-  const drawingAreaRef = useRef({
-    width: 0,
-    height: 0,
-    offsetX: 0,
-    offsetY: 0
-  });
 
   // Color options
   const colorOptions = [
@@ -52,46 +48,49 @@ function App() {
   }, [penColor]);
 
   /* =======================
-      FULLSCREEN CANVAS with 21:9 Aspect Ratio
+      RESIZE HANDLER for 21:9 Container
   ======================= */
   useEffect(() => {
-    const resize = () => {
-      if (!canvasRef.current) return;
+    const updateContainerSize = () => {
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
       
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-      const targetAspectRatio = 21/9;
-      const currentAspectRatio = width / height;
+      // Calculate 21:9 aspect ratio dimensions
+      const aspectRatio = 21/9;
+      let containerWidth, containerHeight, top, left;
       
-      let canvasWidth, canvasHeight, offsetX = 0, offsetY = 0;
-      
-      if (currentAspectRatio > targetAspectRatio) {
-        // Screen is wider than 21:9
-        canvasHeight = height;
-        canvasWidth = height * targetAspectRatio;
-        offsetX = (width - canvasWidth) / 2;
+      if (windowWidth / windowHeight > aspectRatio) {
+        // Window is wider than 21:9
+        containerHeight = Math.min(windowHeight * 0.9, windowHeight - 100); // Leave space for controls
+        containerWidth = containerHeight * aspectRatio;
       } else {
-        // Screen is taller than 21:9
-        canvasWidth = width;
-        canvasHeight = width / targetAspectRatio;
-        offsetY = (height - canvasHeight) / 2;
+        // Window is taller than 21:9
+        containerWidth = Math.min(windowWidth * 0.95, windowWidth - 40);
+        containerHeight = containerWidth / aspectRatio;
       }
       
-      canvasRef.current.width = canvasWidth;
-      canvasRef.current.height = canvasHeight;
+      // Center the container
+      top = (windowHeight - containerHeight) / 2;
+      left = (windowWidth - containerWidth) / 2;
       
-      // Store drawing area info
-      drawingAreaRef.current = { 
-        width: canvasWidth, 
-        height: canvasHeight, 
-        offsetX, 
-        offsetY 
-      };
+      setContainerSize({
+        width: containerWidth,
+        height: containerHeight,
+        top,
+        left
+      });
+      
+      // Update canvas size
+      if (canvasRef.current) {
+        canvasRef.current.width = containerWidth;
+        canvasRef.current.height = containerHeight;
+      }
     };
     
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
+    updateContainerSize();
+    window.addEventListener("resize", updateContainerSize);
+    
+    return () => window.removeEventListener("resize", updateContainerSize);
   }, []);
 
   /* =======================
@@ -178,8 +177,8 @@ function App() {
           await handsRef.current.send({ image: webcamRef.current.video });
         }
       },
-      width: 1680,
-      height: 720,
+      width: 1680, // 21:9 width
+      height: 720, // 21:9 height
     });
 
     camera.start();
@@ -217,23 +216,29 @@ function App() {
     // Pinching - start drawing
     setIsDrawing(true);
     
-    // Get drawing area dimensions
-    const { width, height, offsetX, offsetY } = drawingAreaRef.current;
+    // Get container dimensions
+    const { width, height, left, top } = containerSize;
     
-    // Convert normalized coordinates to canvas coordinates
-    const x = (1 - index.x) * width + offsetX;
-    const y = index.y * height + offsetY;
+    // Convert normalized coordinates to container coordinates
+    const x = (1 - index.x) * width + left;
+    const y = index.y * height + top;
 
     if (prevPoint.current) {
       const nx = lerp(prevPoint.current.x, x, 0.3);
       const ny = lerp(prevPoint.current.y, y, 0.3);
 
+      // Convert to canvas coordinates (relative to container)
+      const canvasX1 = prevPoint.current.x - left;
+      const canvasY1 = prevPoint.current.y - top;
+      const canvasX2 = nx - left;
+      const canvasY2 = ny - top;
+
       const payload = {
         room,
-        x1: prevPoint.current.x - offsetX,
-        y1: prevPoint.current.y - offsetY,
-        x2: nx - offsetX,
-        y2: ny - offsetY,
+        x1: canvasX1,
+        y1: canvasY1,
+        x2: canvasX2,
+        y2: canvasY2,
         color: colorRef.current,
       };
 
@@ -250,7 +255,7 @@ function App() {
     if (!ctx) return;
 
     ctx.strokeStyle = color;
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 6;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -308,69 +313,104 @@ function App() {
   }
 
   return (
-    <>
-      {/* Canvas for drawing */}
-      <canvas ref={canvasRef} className="canvas-overlay" />
-      
-      {/* Video Container */}
-      <div className="video-container">
-        {mainView === "local" ? (
-          <Webcam 
-            ref={webcamRef} 
-            mirrored 
-            className="main-video-feed" 
-            videoConstraints={{
-              width: 1680,
-              height: 720,
-              aspectRatio: 21/9
-            }}
-          />
-        ) : (
-          <video 
-            ref={remoteVideoRef} 
-            autoPlay 
-            playsInline 
-            className="main-video-feed" 
-          />
-        )}
+    <div className="app-container">
+      {/* 21:9 Container Box */}
+      <div 
+        ref={containerRef}
+        className="canvas-container"
+        style={{
+          width: `${containerSize.width}px`,
+          height: `${containerSize.height}px`,
+          top: `${containerSize.top}px`,
+          left: `${containerSize.left}px`
+        }}
+      >
+        {/* Canvas for drawing */}
+        <canvas 
+          ref={canvasRef} 
+          className="drawing-canvas"
+          style={{
+            width: '100%',
+            height: '100%'
+          }}
+        />
+        
+        {/* Video Feed */}
+        <div className="video-feed">
+          {mainView === "local" ? (
+            <Webcam 
+              ref={webcamRef} 
+              mirrored 
+              className="main-video"
+              videoConstraints={{
+                width: 1680,
+                height: 720,
+                aspectRatio: 21/9
+              }}
+            />
+          ) : (
+            <video 
+              ref={remoteVideoRef} 
+              autoPlay 
+              playsInline 
+              className="main-video"
+            />
+          )}
+        </div>
       </div>
 
       {/* Control Panel */}
       <div className="control-panel">
-        <div className="color-picker">
-          {colorOptions.map((color) => (
-            <button
-              key={color}
-              className={`color-btn ${penColor === color ? 'active' : ''}`}
-              style={{ backgroundColor: color }}
-              onClick={() => setPenColor(color)}
-              title={`Select ${color}`}
-            />
-          ))}
+        <div className="color-picker-section">
+          <h3>Pen Color</h3>
+          <div className="color-picker">
+            {colorOptions.map((color) => (
+              <button
+                key={color}
+                className={`color-btn ${penColor === color ? 'active' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => setPenColor(color)}
+                title={`Select ${color}`}
+              />
+            ))}
+          </div>
         </div>
         
-        <div className="control-buttons">
-          <button className="control-btn clear-btn" onClick={clearCanvas} title="Clear Canvas">
-            🗑️ Clear
+        <div className="action-buttons">
+          <button className="action-btn clear-btn" onClick={clearCanvas} title="Clear Canvas">
+            <span className="btn-icon">🗑️</span>
+            <span className="btn-text">Clear Canvas</span>
           </button>
-          <button className="control-btn switch-btn" onClick={switchView} title="Switch View">
-            {mainView === "local" ? "👁️ View Remote" : "👁️ View Self"}
+          
+          <button className="action-btn switch-btn" onClick={switchView} title="Switch View">
+            <span className="btn-icon">{mainView === "local" ? "👁️" : "📹"}</span>
+            <span className="btn-text">{mainView === "local" ? "View Remote" : "View Self"}</span>
           </button>
         </div>
       </div>
 
-      {/* Drawing Status Indicator */}
+      {/* Drawing Status */}
       <div className={`drawing-status ${isDrawing ? 'drawing' : ''}`}>
-        <div className="status-dot"></div>
-        <span>{isDrawing ? "Drawing..." : "Pinch to draw"}</span>
+        <div className="status-indicator">
+          <div className="status-dot"></div>
+          <span className="status-text">
+            {isDrawing ? "Drawing..." : "Pinch thumb and index finger to draw"}
+          </span>
+        </div>
       </div>
 
       {/* Room Info */}
       <div className="room-info">
-        <span>Room: {room}</span>
-        <button className="leave-btn" onClick={() => setJoined(false)}>Leave</button>
+        <div className="room-id">
+          <span className="room-label">Room:</span>
+          <span className="room-value">{room}</span>
+        </div>
+        <button className="leave-btn" onClick={() => setJoined(false)}>
+          <span className="leave-icon">🚪</span>
+          Leave Room
+        </button>
       </div>
-    </>
+    </div>
   );
 }
 
