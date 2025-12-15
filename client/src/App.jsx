@@ -6,9 +6,8 @@ import "./App.css";
 
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
-const socket = io(SERVER_URL, {
-  transports: ["websocket"],
-});
+// 1. FIXED: Removed "transports: ['websocket']" to allow polling fallback
+const socket = io(SERVER_URL);
 
 function App() {
   const webcamRef = useRef(null);
@@ -20,15 +19,14 @@ function App() {
   const [myPeerId, setMyPeerId] = useState("");
 
   const prevPoint = useRef({ x: 0, y: 0 });
-  const colorRef = useRef("#FF0000"); // Default Red
+  const colorRef = useRef("#FF0000"); 
   const peerRef = useRef(null);
-  const handsRef = useRef(null); // Keep track of Hands instance
-  const cameraRef = useRef(null); // Keep track of Camera instance
+  const handsRef = useRef(null); 
 
   useEffect(() => {
     if (!joined) return;
 
-    // --- 1. SETUP PEERJS (VIDEO CALLING) ---
+    // --- PEERJS SETUP ---
     const peer = new Peer(undefined, {
       host: "air-canvas-2sga.onrender.com",
       port: 443,
@@ -44,14 +42,11 @@ function App() {
       socket.emit("join_room", { room, peerId: id });
     });
 
-    // Answer incoming calls
     peer.on("call", (call) => {
-      console.log("Receiving call...");
       navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then((stream) => {
           call.answer(stream);
           call.on("stream", (remoteStream) => {
-            console.log("Stream received!");
             if (remoteVideoRef.current) {
               remoteVideoRef.current.srcObject = remoteStream;
             }
@@ -60,34 +55,32 @@ function App() {
     });
 
     socket.on("user_connected", (peerId) => {
-      console.log("New user connected:", peerId);
       callUser(peerId);
     });
 
-    // --- 2. SETUP MEDIAPIPE (AIR WRITING) WITH RETRY LOGIC ---
+    // --- MEDIAPIPE SETUP (FIXED) ---
     const startMediaPipe = async () => {
-      // Wait for window.Hands to be available (checks 20 times)
       let attempts = 0;
       while (!window.Hands && attempts < 20) {
-        console.log("Waiting for MediaPipe scripts to load...");
-        await new Promise(r => setTimeout(r, 500)); // Wait 0.5s
+        console.log("Waiting for MediaPipe...");
+        await new Promise(r => setTimeout(r, 500));
         attempts++;
       }
 
       if (!window.Hands) {
-        console.error("MediaPipe failed to load. Check index.html scripts.");
+        console.error("MediaPipe failed to load.");
         return;
       }
 
-      console.log("MediaPipe Loaded! Starting Hands...");
-
       const hands = new window.Hands({
+        // 2. FIXED: Pointing to the specific stable version
         locateFile: (file) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+          `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`,
       });
 
       hands.setOptions({
         maxNumHands: 1,
+        modelComplexity: 1,
         minDetectionConfidence: 0.5,
         minTrackingConfidence: 0.5,
       });
@@ -106,36 +99,27 @@ function App() {
           height: 480,
         });
         camera.start();
-        cameraRef.current = camera;
       }
     };
 
     startMediaPipe();
 
-    // --- 3. SOCKET DRAWING EVENTS ---
     socket.on("receive_draw", drawLine);
     socket.on("clear_canvas", clearCanvasLocal);
 
-    // CLEANUP
     return () => {
       socket.off("receive_draw");
       socket.off("clear_canvas");
       socket.off("user_connected");
       if (peerRef.current) peerRef.current.destroy();
-      // Stop camera if component unmounts
-      // (Optional depending on library behavior)
     };
   }, [joined]);
 
-  // --- HELPER FUNCTIONS ---
-
   const callUser = (peerId) => {
-    console.log("Calling user:", peerId);
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then((stream) => {
         const call = peerRef.current.call(peerId, stream);
         call.on("stream", (remoteStream) => {
-            console.log("Remote stream received (Caller)");
             if (remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = remoteStream;
             }
@@ -167,23 +151,17 @@ function App() {
   };
 
   const onResults = (results) => {
-    // Only clear if you want non-permanent trails
-    // const ctx = canvasRef.current.getContext("2d");
-    // ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
     if (!results.multiHandLandmarks?.length) {
       prevPoint.current = { x: 0, y: 0 };
       return;
     }
 
     const hand = results.multiHandLandmarks[0];
-    const index = hand[8]; // Index finger tip
+    const index = hand[8]; 
 
-    // Mirror logic
     const x = (1 - index.x) * canvasRef.current.width;
     const y = index.y * canvasRef.current.height;
 
-    // Start drawing only if we have a previous point
     if (prevPoint.current.x) {
         drawLine({
           x1: prevPoint.current.x,
@@ -202,7 +180,6 @@ function App() {
           color: colorRef.current,
         });
     }
-
     prevPoint.current = { x, y };
   };
 
@@ -210,10 +187,7 @@ function App() {
     return (
       <div className="join-screen">
         <h2>Air Canvas Join</h2>
-        <input
-          placeholder="Enter Room ID"
-          onChange={(e) => setRoom(e.target.value)}
-        />
+        <input placeholder="Enter Room ID" onChange={(e) => setRoom(e.target.value)} />
         <button onClick={() => setJoined(true)}>Start</button>
       </div>
     );
@@ -225,7 +199,6 @@ function App() {
         <h3>Room: {room}</h3>
         <button onClick={broadcastClear} className="clear-btn">Clear Board</button>
       </div>
-
       <div className="video-grid">
         <div className="video-wrapper local">
           <Webcam ref={webcamRef} mirrored={true} className="webcam" />
