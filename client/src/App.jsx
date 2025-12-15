@@ -6,7 +6,7 @@ import "./App.css";
 
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
-// 1. FIXED: Removed "transports: ['websocket']" to allow polling fallback
+// 1. FIXED: Removed "transports" option to fix connection loop
 const socket = io(SERVER_URL);
 
 function App() {
@@ -19,9 +19,9 @@ function App() {
   const [myPeerId, setMyPeerId] = useState("");
 
   const prevPoint = useRef({ x: 0, y: 0 });
-  const colorRef = useRef("#FF0000"); 
+  const colorRef = useRef("#FF0000");
   const peerRef = useRef(null);
-  const handsRef = useRef(null); 
+  const handsRef = useRef(null);
 
   useEffect(() => {
     if (!joined) return;
@@ -58,7 +58,7 @@ function App() {
       callUser(peerId);
     });
 
-    // --- MEDIAPIPE SETUP (FIXED) ---
+    // --- MEDIAPIPE SETUP ---
     const startMediaPipe = async () => {
       let attempts = 0;
       while (!window.Hands && attempts < 20) {
@@ -73,9 +73,10 @@ function App() {
       }
 
       const hands = new window.Hands({
-        // 2. FIXED: Pointing to the specific stable version
-        locateFile: (file) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`,
+        // 2. FIXED: Pointing to EXACTLY the same version as index.html
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+        }
       });
 
       hands.setOptions({
