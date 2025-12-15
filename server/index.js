@@ -9,96 +9,92 @@ app.use(cors());
 
 const server = http.createServer(app);
 
-/* =========================
-   PEER SERVER
-========================= */
+/* =========================================
+        PEER SERVER
+========================================= */
 const peerServer = ExpressPeerServer(server, {
   debug: false,
-  path: "/",
+  path: "/",   // you can switch to "/peerjs" if needed
   proxied: true,
   allow_discovery: true,
 });
+
 app.use("/peerjs", peerServer);
 
-/* =========================
-   SOCKET.IO SERVER
-========================= */
+/* =========================================
+        SOCKET.IO SERVER
+========================================= */
 const io = new Server(server, {
   cors: {
-    origin: "*", 
+    origin: "*",
     methods: ["GET", "POST"],
-    credentials: false
+    credentials: false,
   },
   transports: ["websocket", "polling"],
-  connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000,
-    skipMiddlewares: true
-  }
 });
 
 const rooms = new Map();
-const users = new Map();
 
 io.on("connection", (socket) => {
   console.log(`🔗 User Connected: ${socket.id}`);
-  users.set(socket.id, { connectedAt: new Date() });
 
-  socket.on("join_room", (data) => {
-    const roomId = data.room || data;
-    const peerId = data.peerId;
+  socket.on("join_room", ({ room, peerId }) => {
+    if (!room) return;
 
-    if (!roomId) return;
+    // Leave old room if already joined one
+    if (socket.data.room) socket.leave(socket.data.room);
 
-    if (socket.data.room) {
-      socket.leave(socket.data.room);
-    }
-
-    socket.join(roomId);
-    socket.data.room = roomId;
+    socket.join(room);
+    socket.data.room = room;
     socket.data.peerId = peerId;
 
-    if (!rooms.has(roomId)) {
-      rooms.set(roomId, new Set());
-    }
-    rooms.get(roomId).add(socket.id);
+    if (!rooms.has(room)) rooms.set(room, new Set());
+    rooms.get(room).add(socket.id);
 
-    socket.to(roomId).emit("user_connected", peerId);
+    socket.to(room).emit("user_connected", peerId);
   });
 
+  /* =========================================
+        DRAW EVENTS
+  ========================================== */
   socket.on("draw_line", (data) => {
-    const { room, x1, y1, x2, y2, color } = data;
+    const { room } = data;
     if (room) {
       socket.to(room).emit("receive_draw", {
-        x1, y1, x2, y2, color,
-        from: socket.id
+        ...data,
+        from: socket.id,
       });
     }
   });
 
-  socket.on("clear_canvas", (data) => {
-    const roomId = data.room || socket.data.room;
-    if (roomId) {
-      socket.to(roomId).emit("clear_canvas", { from: socket.id });
-    }
+  socket.on("clear_canvas", ({ room }) => {
+    socket.to(room).emit("clear_canvas");
   });
 
+  /* =========================================
+        DISCONNECT HANDLING
+  ========================================== */
   socket.on("disconnect", () => {
-    const userRoom = socket.data.room;
-    if (userRoom && rooms.has(userRoom)) {
-      const roomUsers = rooms.get(userRoom);
-      roomUsers.delete(socket.id);
-      if (roomUsers.size === 0) {
-        rooms.delete(userRoom);
-      } else {
-        socket.to(userRoom).emit("user_disconnected", {
-          peerId: socket.data.peerId
-        });
-      }
+    const room = socket.data.room;
+
+    if (room && rooms.has(room)) {
+      const set = rooms.get(room);
+      set.delete(socket.id);
+
+      if (set.size === 0) rooms.delete(room);
+
+      socket.to(room).emit("user_disconnected", {
+        peerId: socket.data.peerId,
+      });
     }
-    users.delete(socket.id);
+
+    console.log(`❌ User Disconnected: ${socket.id}`);
   });
 });
 
+/* =========================================
+        START SERVER
+========================================= */
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`);
