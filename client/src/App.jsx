@@ -6,22 +6,22 @@ import "./App.css";
 
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
-// FIXED: Socket Connection (Polling first prevents 404/Connection errors)
 const socket = io(SERVER_URL, {
-  transports: ['polling', 'websocket'], 
+  transports: ['polling', 'websocket'],
   reconnection: true,
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
 });
 
-// Smooth interpolation for drawing
 const lerp = (a, b, t) => a + (b - a) * t;
 
 function App() {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const containerRef = useRef(null);
+  
+  // New ref for the inner wrapper (Video+Canvas)
+  const contentWrapperRef = useRef(null);
 
   const [room, setRoom] = useState("");
   const [joined, setJoined] = useState(false);
@@ -29,7 +29,13 @@ function App() {
   const [remoteStreamObj, setRemoteStreamObj] = useState(null);
   const [mainView, setMainView] = useState("local");
   const [isDrawing, setIsDrawing] = useState(false);
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0, top: 0, left: 0 });
+  
+  // Dimensions for the 21:9 Outer Container
+  const [outerContainerSize, setOuterContainerSize] = useState({ width: 0, height: 0, top: 0, left: 0 });
+  
+  // Aspect Ratio of the actual camera (defaults to 16:9)
+  const [cameraRatio, setCameraRatio] = useState(16/9);
+
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [showInvite, setShowInvite] = useState(false);
   const [roomMembers, setRoomMembers] = useState([]);
@@ -42,7 +48,7 @@ function App() {
   const lastEmitRef = useRef(0);
   const mediaStreamRef = useRef(null);
 
-  // Premium color options
+  // Colors
   const colorOptions = [
     { name: "Crimson Red", value: "#ff4d4d", gradient: "linear-gradient(135deg, #ff4d4d, #ff3333)" },
     { name: "Emerald Green", value: "#4dff4d", gradient: "linear-gradient(135deg, #4dff4d, #33cc33)" },
@@ -62,70 +68,64 @@ function App() {
   }, [penColor]);
 
   /* =======================
-      RESIZE HANDLER (Cinematic 21:9)
+      RESIZE HANDLER (Calculates 21:9 Box)
   ======================= */
   useEffect(() => {
-    const updateContainerSize = () => {
+    const updateLayout = () => {
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
       
-      const aspectRatio = 21/9;
-      let containerWidth, containerHeight, top, left;
+      // Target Aspect Ratio: 21:9
+      const targetRatio = 21/9;
+      let w, h, top, left;
       
-      if (windowWidth / windowHeight > aspectRatio) {
-        containerHeight = Math.min(windowHeight * 0.85, windowHeight - 120);
-        containerWidth = containerHeight * aspectRatio;
+      // Calculate max size that fits in window while maintaining 21:9
+      if (windowWidth / windowHeight > targetRatio) {
+        h = Math.min(windowHeight * 0.9, windowHeight - 100);
+        w = h * targetRatio;
       } else {
-        containerWidth = Math.min(windowWidth * 0.95, windowWidth - 40);
-        containerHeight = containerWidth / aspectRatio;
+        w = Math.min(windowWidth * 0.95, windowWidth - 40);
+        h = w / targetRatio;
       }
       
-      top = (windowHeight - containerHeight) / 2;
-      left = (windowWidth - containerWidth) / 2;
+      top = (windowHeight - h) / 2;
+      left = (windowWidth - w) / 2;
       
-      setContainerSize({
-        width: containerWidth,
-        height: containerHeight,
-        top: Math.max(top, 80),
-        left
-      });
-      
-      if (canvasRef.current) {
-        canvasRef.current.width = containerWidth;
-        canvasRef.current.height = containerHeight;
-      }
+      setOuterContainerSize({ width: w, height: h, top: Math.max(top, 60), left });
     };
     
-    updateContainerSize();
-    window.addEventListener("resize", updateContainerSize);
-    return () => window.removeEventListener("resize", updateContainerSize);
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    return () => window.removeEventListener("resize", updateLayout);
   }, []);
+
+  /* =======================
+      DETECT CAMERA RATIO
+  ======================= */
+  const handleVideoLoad = (stream) => {
+    const track = stream.getVideoTracks()[0];
+    const settings = track.getSettings();
+    if (settings.width && settings.height) {
+        setCameraRatio(settings.width / settings.height);
+    }
+  };
 
   /* =======================
       CONNECTION SETUP
   ======================= */
   useEffect(() => {
     if (!joined) return;
-
     setConnectionStatus("connecting");
 
-    // Initialize PeerJS
     const peer = new Peer(undefined, {
       host: "air-canvas-2sga.onrender.com",
       secure: true,
       path: "/peerjs",
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
-      },
     });
 
     peerRef.current = peer;
 
     peer.on("open", (id) => {
-      console.log("Peer connected:", id);
       socket.emit("join_room", { room, peerId: id, userName: "User" });
       setConnectionStatus("connected");
       setRoomMembers([{ id, name: "You", isYou: true }]);
@@ -138,6 +138,7 @@ function App() {
           audio: true 
         });
         mediaStreamRef.current = stream;
+        handleVideoLoad(stream); // Detect ratio
         call.answer(stream);
         call.on("stream", (remoteStream) => {
           if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
@@ -148,11 +149,7 @@ function App() {
       } catch (err) { console.error(err); }
     });
 
-    socket.on("user_connected", (data) => {
-      callUser(data.peerId);
-      setRoomMembers(prev => [...prev, { id: data.peerId, name: "Friend", isRemote: true }]);
-    });
-
+    socket.on("user_connected", (data) => callUser(data.peerId));
     socket.on("receive_draw", drawLine);
     socket.on("clear_canvas", clearCanvasLocal);
 
@@ -168,10 +165,9 @@ function App() {
   }, [joined]);
 
   /* =======================
-      MEDIAPIPE SETUP
+      MEDIAPIPE
   ======================= */
   const startMediaPipe = async () => {
-    // Wait for global script from index.html
     let tries = 0;
     while (!window.Hands && tries < 20) {
       await new Promise(r => setTimeout(r, 500));
@@ -193,7 +189,6 @@ function App() {
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    // Use Camera utility
     if (webcamRef.current?.video) {
         const camera = new window.Camera(webcamRef.current.video, {
             onFrame: async () => {
@@ -210,7 +205,7 @@ function App() {
   };
 
   /* =======================
-      DRAWING LOGIC (PINCH TO DRAW)
+      DRAWING LOGIC
   ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
@@ -219,20 +214,18 @@ function App() {
       return;
     }
 
+    // Rate Limit
     const now = Date.now();
     if (now - lastEmitRef.current < 16) return;
     lastEmitRef.current = now;
 
     const lm = results.multiHandLandmarks[0];
-    const index = lm[8]; // Index finger tip
-    const thumb = lm[4]; // Thumb tip
+    const index = lm[8]; 
+    const thumb = lm[4]; 
 
-    // 1. PINCH DETECTION LOGIC
-    // Calculate distance between Index and Thumb
-    const pinchDist = Math.hypot(index.x - thumb.x, index.y - thumb.y);
-    
-    // Threshold: if > 0.08, fingers are apart -> STOP drawing
-    if (pinchDist > 0.08) {
+    // Pinch Detection
+    const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+    if (pinch > 0.08) {
       prevPoint.current = null;
       setIsDrawing(false);
       return;
@@ -240,16 +233,18 @@ function App() {
 
     setIsDrawing(true);
     
-    // 2. COORDINATE MAPPING
-    const { width, height } = containerSize;
+    // MAPPING: Use the size of the inner wrapper (video size)
+    const wrapper = contentWrapperRef.current;
+    if (!wrapper) return;
     
-    // Mirror X (1 - index.x) for natural feel
-    // These are local coordinates relative to the canvas size
+    const width = wrapper.clientWidth;
+    const height = wrapper.clientHeight;
+    
+    // Mirror X coordinate
     const x = (1 - index.x) * width;
     const y = index.y * height;
 
     if (prevPoint.current) {
-      // 3. SMOOTHING (Lerp)
       const nx = lerp(prevPoint.current.x, x, 0.3);
       const ny = lerp(prevPoint.current.y, y, 0.3);
 
@@ -296,6 +291,7 @@ function App() {
         audio: true 
       });
       mediaStreamRef.current = stream;
+      handleVideoLoad(stream);
       const call = peerRef.current.call(peerId, stream);
       call.on("stream", (remoteStream) => {
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream;
@@ -333,48 +329,63 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Status Bar */}
       <div className={`connection-status ${connectionStatus}`}>
         <div className="status-indicator"></div>
         <span>{connectionStatus === "connected" ? "Online" : "Connecting..."}</span>
         {connectionStatus === "connected" && <span className="room-code">Room: {room}</span>}
       </div>
 
-      {/* 21:9 Container */}
+      {/* 21:9 OUTER CONTAINER */}
       <div 
         ref={containerRef}
         className="canvas-container"
         style={{
-          width: containerSize.width,
-          height: containerSize.height,
-          top: containerSize.top,
-          left: containerSize.left
+          width: outerContainerSize.width,
+          height: outerContainerSize.height,
+          top: outerContainerSize.top,
+          left: outerContainerSize.left
         }}
       >
-        <canvas ref={canvasRef} className="drawing-canvas" />
-        
-        <div className="video-feed">
-          {mainView === "local" ? (
-            <Webcam 
-              ref={webcamRef} 
-              mirrored 
-              className="main-video"
-              // Force Webcam to fill the 21:9 container completely
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        {/* INNER WRAPPER: Matches CAMERA aspect ratio & centers content */}
+        <div 
+            ref={contentWrapperRef}
+            className="content-wrapper"
+            style={{ 
+                aspectRatio: `${cameraRatio}`,
+                height: '100%',
+                margin: '0 auto', // Centers horizontally
+                position: 'relative'
+            }}
+        >
+            {/* Canvas overlay matches inner wrapper exactly */}
+            <canvas 
+                ref={canvasRef} 
+                className="drawing-canvas" 
+                width={outerContainerSize.height * cameraRatio}
+                height={outerContainerSize.height}
             />
-          ) : (
-            <video 
-              ref={remoteVideoRef} 
-              autoPlay 
-              playsInline 
-              className="main-video"
-            />
-          )}
+            
+            <div className="video-feed">
+            {mainView === "local" ? (
+                <Webcam 
+                ref={webcamRef} 
+                mirrored 
+                className="main-video"
+                onUserMedia={handleVideoLoad}
+                />
+            ) : (
+                <video 
+                ref={remoteVideoRef} 
+                autoPlay 
+                playsInline 
+                className="main-video"
+                />
+            )}
+            </div>
         </div>
         <div className="container-glow"></div>
       </div>
 
-      {/* Control Panel */}
       <div className="control-panel">
         <div className="panel-section">
           <h3>Drawing Tools</h3>
@@ -400,7 +411,6 @@ function App() {
              ))}
           </div>
         </div>
-        
         <div className="panel-section">
             <h3>Actions</h3>
             <button className="action-btn" onClick={() => { clearCanvasLocal(); socket.emit("clear_canvas", {room}); }}>
@@ -415,12 +425,10 @@ function App() {
         </div>
       </div>
 
-      {/* Drawing Indicator */}
       <div className={`drawing-status ${isDrawing ? 'drawing' : ''}`}>
          {isDrawing ? "✏️ Drawing" : "✋ Pinch to Draw"}
       </div>
 
-      {/* Invite Modal */}
       {showInvite && (
         <div className="modal-overlay" onClick={() => setShowInvite(false)}>
           <div className="invite-modal" onClick={e => e.stopPropagation()}>

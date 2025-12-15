@@ -47,14 +47,23 @@ body {
 .connection-status.connected .status-indicator { background: #43e97b; }
 .connection-status.connecting .status-indicator { background: #ffd700; }
 
-/* 21:9 Canvas Box */
+/* 21:9 Canvas Box (Outer Frame) */
 .canvas-container {
   position: absolute;
-  background: black;
+  background: black; /* Cinematic bars */
   border-radius: 20px;
   overflow: hidden;
   border: 2px solid rgba(255,255,255,0.1);
   box-shadow: 0 0 50px rgba(0,0,0,0.8);
+  display: flex;
+  justify-content: center; /* Center the inner content */
+  align-items: center;
+}
+
+/* Inner Wrapper (Matches Video Size) */
+.content-wrapper {
+    position: relative;
+    /* aspect-ratio handled in inline styles in App.js */
 }
 
 .video-feed, .main-video, .drawing-canvas {
@@ -66,7 +75,7 @@ body {
 }
 
 .main-video {
-  object-fit: cover; /* Fills the 21:9 box completely */
+  object-fit: contain; /* Ensures full face visibility */
   z-index: 1;
 }
 
