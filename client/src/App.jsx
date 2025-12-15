@@ -1,28 +1,83 @@
-// ... (imports and initial setup remain unchanged) ...
+import React, { useEffect, useRef, useState } from "react";
+import Webcam from "react-webcam";
+import io from "socket.io-client";
+import Peer from "peerjs";
+import "./App.css";
+
+const SERVER_URL = "https://air-canvas-2sga.onrender.com";
+const socket = io(SERVER_URL);
+
+/* =======================
+   HELPERS
+======================= */
+const lerp = (a, b, t) => a + (b - a) * t;
 
 function App() {
-  // ... (existing state and refs remain unchanged) ...
-
-  // Add a new ref for the canvas container (if not already present)
+  /* =======================
+     REFS
+  ======================= */
+  const webcamRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const canvasRef = useRef(null);
   const containerRef = useRef(null);
+  const contentWrapperRef = useRef(null);
+  const peerRef = useRef(null);
+  const handsRef = useRef(null);
 
-  // ... (colorOptions, penSizes, etc., remain unchanged) ...
+  const prevPoint = useRef(null);
+  const lastEmitRef = useRef(0);
 
   /* =======================
-      RESIZE HANDLER (Calculates 21:9 Box) - Unchanged
+     STATE
   ======================= */
+  const [room, setRoom] = useState("");
+  const [joined, setJoined] = useState(false);
+  const [mainView, setMainView] = useState("local"); // local | remote
+  const [penSize] = useState(5);
+  const [penColor] = useState("#ff4d4d");
+
+  const colorRef = useRef(penColor);
+  useEffect(() => (colorRef.current = penColor), [penColor]);
+
+  /* =======================
+     21:9 LAYOUT
+  ======================= */
+  const [outerContainerSize, setOuterContainerSize] = useState({
+    width: 0,
+    height: 0,
+    top: 0,
+    left: 0,
+  });
+
+  const cameraRatio = 16 / 9;
+  const targetRatio = 21 / 9;
+
   useEffect(() => {
     const updateLayout = () => {
-      // ... (your existing updateLayout logic remains unchanged) ...
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      let width = vw * 0.95;
+      let height = width / targetRatio;
+
+      if (height > vh * 0.85) {
+        height = vh * 0.85;
+        width = height * targetRatio;
+      }
+
+      setOuterContainerSize({
+        width,
+        height,
+        left: (vw - width) / 2,
+        top: (vh - height) / 2,
+      });
     };
+
     updateLayout();
     window.addEventListener("resize", updateLayout);
     return () => window.removeEventListener("resize", updateLayout);
   }, []);
 
-  /* =======================
-      UPDATE CANVAS SIZE ON RESIZE
-  ======================= */
   useEffect(() => {
     if (canvasRef.current) {
       canvasRef.current.width = outerContainerSize.width;
@@ -30,60 +85,99 @@ function App() {
     }
   }, [outerContainerSize]);
 
-  // ... (handleVideoLoad, connection setup, startMediaPipe remain unchanged) ...
+  /* =======================
+     PEER + SOCKET
+  ======================= */
+  useEffect(() => {
+    if (!joined) return;
+
+    const peer = new Peer(undefined, {
+      host: "air-canvas-2sga.onrender.com",
+      secure: true,
+      port: 443,
+      path: "/peerjs",
+    });
+
+    peerRef.current = peer;
+
+    peer.on("open", (id) => {
+      socket.emit("join_room", { room, peerId: id });
+    });
+
+    peer.on("call", (call) => {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then((stream) => {
+        call.answer(stream);
+        call.on("stream", (remoteStream) => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+          }
+        });
+      });
+    });
+
+    socket.on("user_connected", (peerId) => {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then((stream) => {
+        const call = peer.call(peerId, stream);
+        call.on("stream", (remoteStream) => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+          }
+        });
+      });
+    });
+
+    socket.on("receive_draw", drawLine);
+    socket.on("clear_canvas", clearCanvasLocal);
+
+    return () => {
+      socket.off("receive_draw");
+      socket.off("clear_canvas");
+      peer.destroy();
+    };
+  }, [joined]);
 
   /* =======================
-      DRAWING LOGIC - Updated for full 21:9 canvas and normalized coords
+     DRAWING
   ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
       prevPoint.current = null;
-      setIsDrawing(false);
       return;
     }
 
-    // Rate Limit - Unchanged
     const now = Date.now();
     if (now - lastEmitRef.current < 16) return;
     lastEmitRef.current = now;
 
     const lm = results.multiHandLandmarks[0];
-    const index = lm[8]; 
-    const thumb = lm[4]; 
+    const index = lm[8];
+    const thumb = lm[4];
 
-    // Pinch Detection - Unchanged
     const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
     if (pinch > 0.08) {
       prevPoint.current = null;
-      setIsDrawing(false);
       return;
     }
 
-    setIsDrawing(true);
-    
-    // MAPPING: Now to the full canvas size (21:9)
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const width = canvas.width;
-    const height = canvas.height;
-    
-    // Mirror X coordinate
-    const x = (1 - index.x) * width;
-    const y = index.y * height;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    const x = (1 - index.x) * w;
+    const y = index.y * h;
 
     if (prevPoint.current) {
       const nx = lerp(prevPoint.current.x, x, 0.3);
       const ny = lerp(prevPoint.current.y, y, 0.3);
 
-      // Emit normalized coordinates (0-1 scale for cross-device compatibility)
       const payload = {
         room,
-        x1: prevPoint.current.x / width,
-        y1: prevPoint.current.y / height,
-        x2: nx / width,
-        y2: ny / height,
+        x1: prevPoint.current.x / w,
+        y1: prevPoint.current.y / h,
+        x2: nx / w,
+        y2: ny / h,
         color: colorRef.current,
-        size: penSize
+        size: penSize,
       };
 
       drawLine(payload);
@@ -97,84 +191,67 @@ function App() {
   const drawLine = ({ x1, y1, x2, y2, color, size }) => {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    
-    // Scale normalized coords back to local canvas size
-    const canvas = canvasRef.current;
-    const width = canvas.width;
-    const height = canvas.height;
-    
+
+    const w = canvasRef.current.width;
+    const h = canvasRef.current.height;
+
     ctx.strokeStyle = color;
-    ctx.lineWidth = size || penSize;
+    ctx.lineWidth = size;
     ctx.lineCap = "round";
-    ctx.lineJoin = "round";
     ctx.beginPath();
-    ctx.moveTo(x1 * width, y1 * height);
-    ctx.lineTo(x2 * width, y2 * height);
+    ctx.moveTo(x1 * w, y1 * h);
+    ctx.lineTo(x2 * w, y2 * h);
     ctx.stroke();
   };
 
-  // ... (clearCanvasLocal, callUser, switchView remain unchanged) ...
+  const clearCanvasLocal = () => {
+    const ctx = canvasRef.current?.getContext("2d");
+    ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
 
   /* =======================
-      UI RENDER - Updated JSX structure
+     UI
   ======================= */
-  // ... (join screen remains unchanged) ...
+  if (!joined) {
+    return (
+      <div className="join-screen">
+        <h2>Air Canvas</h2>
+        <input onChange={(e) => setRoom(e.target.value)} placeholder="Room ID" />
+        <button onClick={() => setJoined(true)}>Start</button>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
-      // ... (connection status remains unchanged) ...
-
-      {/* 21:9 OUTER CONTAINER */}
-      <div 
+      <div
         ref={containerRef}
         className="canvas-container"
-        style={{
-          width: outerContainerSize.width,
-          height: outerContainerSize.height,
-          top: outerContainerSize.top,
-          left: outerContainerSize.left
-        }}
+        style={outerContainerSize}
       >
-        {/* CANVAS: Now covers the full 21:9 area as a shared overlay */}
-        <canvas 
-          ref={canvasRef} 
-          className="drawing-canvas" 
-          // width/height set dynamically in useEffect
-        />
-        
-        {/* INNER WRAPPER: Only for video centering */}
-        <div 
+        <canvas ref={canvasRef} className="drawing-canvas" />
+
+        <div
           ref={contentWrapperRef}
           className="content-wrapper"
-          style={{ 
-            aspectRatio: `${cameraRatio}`,
-            height: '100%',
-            margin: '0 auto', // Centers horizontally
-            position: 'relative'
-          }}
+          style={{ aspectRatio: cameraRatio, height: "100%" }}
         >
           <div className="video-feed">
             {mainView === "local" ? (
-              <Webcam 
-                ref={webcamRef} 
-                mirrored 
-                className="main-video"
-                onUserMedia={handleVideoLoad}
-              />
+              <Webcam ref={webcamRef} mirrored className="main-video" />
             ) : (
-              <video 
-                ref={remoteVideoRef} 
-                autoPlay 
-                playsInline 
-                className="main-video"
-              />
+              <video ref={remoteVideoRef} autoPlay playsInline className="main-video" />
             )}
           </div>
         </div>
-        <div className="container-glow"></div>
       </div>
 
-      // ... (control-panel, drawing-status, invite modal remain unchanged) ...
+      <button
+        style={{ position: "fixed", bottom: 30, right: 30 }}
+        onClick={() => setMainView(mainView === "local" ? "remote" : "local")}
+      >
+        Switch View
+      </button>
     </div>
   );
 }
