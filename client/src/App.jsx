@@ -7,7 +7,7 @@ import "./App.css";
 /* =========================
    SOCKET (Render Backend)
 ========================= */
-const socket = io("https://air-canvas-backend.onrender.com", {
+const socket = io("https://air-canvas-2sga.onrender.com", {
   transports: ["websocket"],
 });
 
