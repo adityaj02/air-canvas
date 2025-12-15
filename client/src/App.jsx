@@ -6,7 +6,7 @@ import "./App.css";
 
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
-// 1. FIXED: Removed "transports" option to fix connection loop
+// 1. FIXED: Socket connection (No strict transport options to prevent loops)
 const socket = io(SERVER_URL);
 
 function App() {
@@ -61,6 +61,7 @@ function App() {
     // --- MEDIAPIPE SETUP ---
     const startMediaPipe = async () => {
       let attempts = 0;
+      // Wait for window.Hands to load from index.html
       while (!window.Hands && attempts < 20) {
         console.log("Waiting for MediaPipe...");
         await new Promise(r => setTimeout(r, 500));
@@ -73,9 +74,10 @@ function App() {
       }
 
       const hands = new window.Hands({
-        // 2. FIXED: Pointing to EXACTLY the same version as index.html
+        // 2. FIXED: Pointing to UNPKG to match index.html
+        // This fixes the "Failed to read file" error
         locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+          return `https://unpkg.com/@mediapipe/hands/${file}`;
         }
       });
 
