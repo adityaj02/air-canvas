@@ -7,8 +7,8 @@ import "./App.css";
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 const socket = io(SERVER_URL);
 
-// SMOOTHING: Lower = Smoother but slightly more lag
-const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+// Smooth interpolation
+const lerp = (a, b, t) => a + (b - a) * t;
 
 function App() {
   const webcamRef = useRef(null);
@@ -17,35 +17,43 @@ function App() {
 
   const [room, setRoom] = useState("");
   const [joined, setJoined] = useState(false);
-  
-  // View State
-  const [mainView, setMainView] = useState("local"); 
   const [penColor, setPenColor] = useState("#ff4d4d");
   const [remoteStreamObj, setRemoteStreamObj] = useState(null);
+  const [mainView, setMainView] = useState("local");
 
-  // DYNAMIC DIMENSIONS: Defaults to HD, but updates to match real camera
-  const [videoDims, setVideoDims] = useState({ width: 1280, height: 720 });
-
-  const prevPoint = useRef({ x: 0, y: 0 });
-  const colorRef = useRef(penColor);
+  const prevPoint = useRef(null);
   const peerRef = useRef(null);
   const handsRef = useRef(null);
-  const lastEmitRef = useRef(0);
   const cameraRef = useRef(null);
+  const colorRef = useRef(penColor);
+  const lastEmitRef = useRef(0);
 
   useEffect(() => {
     colorRef.current = penColor;
   }, [penColor]);
 
-  /* =========================
-     CONNECTION & SETUP
-  ========================= */
+  /* =======================
+      FULLSCREEN CANVAS
+  ======================= */
+  useEffect(() => {
+    const resize = () => {
+      if (!canvasRef.current) return;
+      canvasRef.current.width = window.innerWidth;
+      canvasRef.current.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+
+  /* =======================
+      CONNECTION SETUP
+  ======================= */
   useEffect(() => {
     if (!joined) return;
 
     const peer = new Peer(undefined, {
       host: "air-canvas-2sga.onrender.com",
-      port: 443,
       secure: true,
       path: "/peerjs",
     });
@@ -57,45 +65,35 @@ function App() {
     });
 
     peer.on("call", (call) => {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then((stream) => {
-          call.answer(stream);
-          call.on("stream", (remoteStream) => {
-            setRemoteStreamObj(remoteStream);
-            setMainView("remote"); 
-          });
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+        call.answer(stream);
+        call.on("stream", (remoteStream) => {
+          setRemoteStreamObj(remoteStream);
+          setMainView("remote");
         });
+      });
     });
 
-    socket.on("user_connected", (peerId) => {
-      callUser(peerId);
-    });
-
+    socket.on("user_connected", callUser);
     socket.on("receive_draw", drawLine);
     socket.on("clear_canvas", clearCanvasLocal);
 
-    // Start MediaPipe (Will restart if videoDims changes)
     startMediaPipe();
 
     return () => {
+      socket.off("user_connected");
       socket.off("receive_draw");
       socket.off("clear_canvas");
-      socket.off("user_connected");
-      peerRef.current?.destroy();
-      if (cameraRef.current) cameraRef.current.stop();
+      peer.destroy();
+      cameraRef.current?.stop();
     };
-  }, [joined, videoDims]); // Re-run if dims change
+  }, [joined]);
 
-  /* =========================
-     MEDIA PIPE SETUP
-  ========================= */
+  /* =======================
+      MEDIAPIPE HANDS
+  ======================= */
   const startMediaPipe = async () => {
-    let tries = 0;
-    while (!window.Hands && tries < 20) {
-      await new Promise(r => setTimeout(r, 300));
-      tries++;
-    }
-    if (!window.Hands) return;
+    while (!window.Hands) await new Promise(r => setTimeout(r, 300));
 
     const hands = new window.Hands({
       locateFile: (f) => `https://unpkg.com/@mediapipe/hands/${f}`,
@@ -103,236 +101,115 @@ function App() {
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7, // Higher confidence to reduce jitter
+      minDetectionConfidence: 0.7,
       minTrackingConfidence: 0.7,
     });
 
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    if (webcamRef.current && webcamRef.current.video) {
-      const camera = new window.Camera(webcamRef.current.video, {
-        onFrame: async () => {
-          if (webcamRef.current?.video) {
-            await hands.send({ image: webcamRef.current.video });
-          }
-        },
-        width: videoDims.width,  
-        height: videoDims.height,
-      });
-      camera.start();
-      cameraRef.current = camera;
-    }
+    const camera = new window.Camera(webcamRef.current.video, {
+      onFrame: async () => {
+        await hands.send({ image: webcamRef.current.video });
+      },
+      width: 1280,
+      height: 720,
+    });
+
+    camera.start();
+    cameraRef.current = camera;
   };
 
-  /* =========================
-     DRAWING LOGIC (PINCH TO DRAW)
-  ========================= */
+  /* =======================
+      DRAWING LOGIC
+  ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
-      prevPoint.current = { x: 0, y: 0 };
+      prevPoint.current = null;
       return;
     }
 
-    // Rate Limiter
     const now = Date.now();
     if (now - lastEmitRef.current < 15) return;
     lastEmitRef.current = now;
 
-    const landmarks = results.multiHandLandmarks[0];
-    const indexFinger = landmarks[8]; 
-    const thumb = landmarks[4];
+    const lm = results.multiHandLandmarks[0];
+    const index = lm[8];
+    const thumb = lm[4];
 
-    // 1. PINCH DETECTION
-    // Calculate distance between Index Tip (8) and Thumb Tip (4)
-    const distance = Math.sqrt(
-      Math.pow(indexFinger.x - thumb.x, 2) + Math.pow(indexFinger.y - thumb.y, 2)
-    );
-
-    // If fingers are far apart (> 0.08), STOP drawing
-    if (distance > 0.08) {
-        prevPoint.current = { x: 0, y: 0 };
-        return;
+    const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+    if (pinch > 0.08) {
+      prevPoint.current = null;
+      return;
     }
 
-    // 2. COORDINATE MAPPING
-    const width = videoDims.width;
-    const height = videoDims.height;
-    
-    // Mirror the X coordinate for natural feel
-    const rawX = (1 - indexFinger.x) * width;
-    const rawY = indexFinger.y * height;
+    const x = (1 - index.x) * window.innerWidth;
+    const y = index.y * window.innerHeight;
 
-    let newX = rawX;
-    let newY = rawY;
-
-    // 3. SMOOTHING
-    if (prevPoint.current.x !== 0) {
-      newX = lerp(prevPoint.current.x, rawX, 0.2); // 0.2 = Very Smooth
-      newY = lerp(prevPoint.current.y, rawY, 0.2);
+    if (prevPoint.current) {
+      const nx = lerp(prevPoint.current.x, x, 0.25);
+      const ny = lerp(prevPoint.current.y, y, 0.25);
 
       const payload = {
         room,
         x1: prevPoint.current.x,
         y1: prevPoint.current.y,
-        x2: newX,
-        y2: newY,
+        x2: nx,
+        y2: ny,
         color: colorRef.current,
       };
 
       drawLine(payload);
       socket.emit("draw_line", payload);
+      prevPoint.current = { x: nx, y: ny };
+    } else {
+      prevPoint.current = { x, y };
     }
-
-    prevPoint.current = { x: newX, y: newY };
   };
 
   const drawLine = ({ x1, y1, x2, y2, color }) => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx) return;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+    const ctx = canvasRef.current.getContext("2d");
     ctx.strokeStyle = color;
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
     ctx.stroke();
   };
 
   const clearCanvasLocal = () => {
-    const ctx = canvasRef.current?.getContext("2d");
-    if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-  };
-
-  const broadcastClear = () => {
-    clearCanvasLocal();
-    socket.emit("clear_canvas", { room });
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
   };
 
   const callUser = (peerId) => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        const call = peerRef.current.call(peerId, stream);
-        call.on("stream", (remoteStream) => {
-          setRemoteStreamObj(remoteStream);
-          setMainView("remote");
-        });
-      });
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      peerRef.current.call(peerId, stream).on("stream", setRemoteStreamObj);
+    });
   };
 
-  useEffect(() => {
-    if (remoteVideoRef.current && remoteStreamObj) {
-      remoteVideoRef.current.srcObject = remoteStreamObj;
-    }
-  }, [mainView, remoteStreamObj]);
-
-  const swapViews = () => {
-    setMainView(prev => prev === "local" ? "remote" : "local");
-  };
-
-  // DETECT REAL CAMERA SIZE
-  const handleVideoLoad = (stream) => {
-    const track = stream.getVideoTracks()[0];
-    const settings = track.getSettings();
-    
-    // Update state to match real camera resolution
-    const newWidth = settings.width || 1280;
-    const newHeight = settings.height || 720;
-
-    // Only update if different (prevents infinite loops)
-    if (newWidth !== videoDims.width || newHeight !== videoDims.height) {
-        console.log(`Camera Loaded: ${newWidth}x${newHeight}`);
-        setVideoDims({ width: newWidth, height: newHeight });
-    }
-  };
-
-  /* =========================
-     JOIN SCREEN
-  ========================= */
   if (!joined) {
     return (
       <div className="join-screen">
         <div className="join-card">
           <h2>Air Canvas</h2>
-          <input 
-            placeholder="Enter Room ID" 
-            onChange={(e) => setRoom(e.target.value)} 
-          />
+          <input placeholder="Room ID" onChange={(e) => setRoom(e.target.value)} />
           <button onClick={() => setJoined(true)}>Start</button>
         </div>
       </div>
     );
   }
 
-  /* =========================
-     MAIN UI
-  ========================= */
   return (
-    <div className="main-container">
-      <div className="top-bar">
-        <div className="logo">Air Canvas</div>
-        <div className="top-actions">
-          <input
-            type="color"
-            value={penColor}
-            onChange={(e) => setPenColor(e.target.value)}
-            className="color-picker"
-          />
-          <button className="clear-btn" onClick={broadcastClear}>
-            Clear
-          </button>
-        </div>
-      </div>
-
-      <div className="stage-container">
-        {/* Aspect Ratio Wrapper */}
-        <div className="stage-wrapper" style={{ aspectRatio: `${videoDims.width}/${videoDims.height}` }}>
-          
-          {/* DRAWING LAYER */}
-          <canvas 
-            ref={canvasRef} 
-            width={videoDims.width} 
-            height={videoDims.height} 
-            className="canvas-overlay" 
-          />
-
-          {/* MAIN VIDEO */}
-          {mainView === "local" ? (
-             <Webcam 
-               ref={webcamRef} 
-               mirrored 
-               onUserMedia={handleVideoLoad} 
-               className="main-video-feed" 
-             />
-          ) : (
-             <video 
-               ref={remoteVideoRef} 
-               autoPlay 
-               playsInline 
-               className="main-video-feed" 
-             />
-          )}
-
-          {/* PiP VIDEO */}
-          <div className="pip-box" onClick={swapViews}>
-            {mainView === "remote" ? (
-              <Webcam mirrored className="pip-feed" />
-            ) : (
-              <video 
-                ref={(el) => { if(el && remoteStreamObj) el.srcObject = remoteStreamObj }} 
-                autoPlay 
-                playsInline 
-                className="pip-feed" 
-              />
-            )}
-            <div className="pip-label">Swap</div>
-          </div>
-          
-        </div>
-      </div>
-    </div>
+    <>
+      <canvas ref={canvasRef} className="canvas-overlay" />
+      {mainView === "local" ? (
+        <Webcam ref={webcamRef} mirrored className="main-video-feed" />
+      ) : (
+        <video ref={remoteVideoRef} autoPlay playsInline className="main-video-feed" />
+      )}
+    </>
   );
 }
 
