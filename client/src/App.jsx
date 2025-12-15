@@ -4,7 +4,6 @@ import io from "socket.io-client";
 import Peer from "peerjs";
 import "./App.css";
 
-// 1. USE YOUR ACTUAL RENDER URL HERE
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
 const socket = io(SERVER_URL, {
@@ -21,15 +20,17 @@ function App() {
   const [myPeerId, setMyPeerId] = useState("");
 
   const prevPoint = useRef({ x: 0, y: 0 });
-  const colorRef = useRef("#FF0000");
+  const colorRef = useRef("#FF0000"); // Default Red
   const peerRef = useRef(null);
+  const handsRef = useRef(null); // Keep track of Hands instance
+  const cameraRef = useRef(null); // Keep track of Camera instance
 
   useEffect(() => {
     if (!joined) return;
 
-    // 2. FIXED: Host must match your Render URL (without https://)
+    // --- 1. SETUP PEERJS (VIDEO CALLING) ---
     const peer = new Peer(undefined, {
-      host: "air-canvas-2sga.onrender.com", // <--- UPDATE THIS
+      host: "air-canvas-2sga.onrender.com",
       port: 443,
       secure: true,
       path: "/peerjs",
@@ -38,32 +39,49 @@ function App() {
     peerRef.current = peer;
 
     peer.on("open", (id) => {
+      console.log("My Peer ID:", id);
       setMyPeerId(id);
       socket.emit("join_room", { room, peerId: id });
     });
 
+    // Answer incoming calls
     peer.on("call", (call) => {
-      const stream = webcamRef.current?.video?.srcObject;
-      if (!stream) return; // Answer only if we have a stream
-
-      call.answer(stream);
-      call.on("stream", (remoteStream) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-        }
-      });
+      console.log("Receiving call...");
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          call.answer(stream);
+          call.on("stream", (remoteStream) => {
+            console.log("Stream received!");
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = remoteStream;
+            }
+          });
+        });
     });
 
     socket.on("user_connected", (peerId) => {
+      console.log("New user connected:", peerId);
       callUser(peerId);
     });
 
-    // --- MEDIAPIPE SETUP ---
-    const Hands = window.Hands;
-    const Camera = window.Camera;
+    // --- 2. SETUP MEDIAPIPE (AIR WRITING) WITH RETRY LOGIC ---
+    const startMediaPipe = async () => {
+      // Wait for window.Hands to be available (checks 20 times)
+      let attempts = 0;
+      while (!window.Hands && attempts < 20) {
+        console.log("Waiting for MediaPipe scripts to load...");
+        await new Promise(r => setTimeout(r, 500)); // Wait 0.5s
+        attempts++;
+      }
 
-    if (Hands && Camera && webcamRef.current && webcamRef.current.video) {
-      const hands = new Hands({
+      if (!window.Hands) {
+        console.error("MediaPipe failed to load. Check index.html scripts.");
+        return;
+      }
+
+      console.log("MediaPipe Loaded! Starting Hands...");
+
+      const hands = new window.Hands({
         locateFile: (file) =>
           `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
       });
@@ -75,41 +93,54 @@ function App() {
       });
 
       hands.onResults(onResults);
+      handsRef.current = hands;
 
-      const camera = new Camera(webcamRef.current.video, {
-        onFrame: async () => {
-          if (webcamRef.current && webcamRef.current.video) {
-            await hands.send({ image: webcamRef.current.video });
-          }
-        },
-        width: 640,
-        height: 480,
-      });
+      if (webcamRef.current && webcamRef.current.video) {
+        const camera = new window.Camera(webcamRef.current.video, {
+          onFrame: async () => {
+            if (webcamRef.current?.video && handsRef.current) {
+               await handsRef.current.send({ image: webcamRef.current.video });
+            }
+          },
+          width: 640,
+          height: 480,
+        });
+        camera.start();
+        cameraRef.current = camera;
+      }
+    };
 
-      camera.start();
-    }
+    startMediaPipe();
 
+    // --- 3. SOCKET DRAWING EVENTS ---
     socket.on("receive_draw", drawLine);
     socket.on("clear_canvas", clearCanvasLocal);
 
+    // CLEANUP
     return () => {
       socket.off("receive_draw");
       socket.off("clear_canvas");
       socket.off("user_connected");
       if (peerRef.current) peerRef.current.destroy();
+      // Stop camera if component unmounts
+      // (Optional depending on library behavior)
     };
   }, [joined]);
 
-  const callUser = (peerId) => {
-    const stream = webcamRef.current?.video?.srcObject;
-    if (!stream || !peerRef.current) return;
+  // --- HELPER FUNCTIONS ---
 
-    const call = peerRef.current.call(peerId, stream);
-    call.on("stream", (remoteStream) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-      }
-    });
+  const callUser = (peerId) => {
+    console.log("Calling user:", peerId);
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        const call = peerRef.current.call(peerId, stream);
+        call.on("stream", (remoteStream) => {
+            console.log("Remote stream received (Caller)");
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = remoteStream;
+            }
+        });
+      });
   };
 
   const drawLine = ({ x1, y1, x2, y2, color }) => {
@@ -136,10 +167,7 @@ function App() {
   };
 
   const onResults = (results) => {
-    if (!canvasRef.current) return;
-    
-    // Clear canvas every frame ONLY if you want temporary trails. 
-    // If you want permanent drawing, remove the next line.
+    // Only clear if you want non-permanent trails
     // const ctx = canvasRef.current.getContext("2d");
     // ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
@@ -151,34 +179,29 @@ function App() {
     const hand = results.multiHandLandmarks[0];
     const index = hand[8]; // Index finger tip
 
-    // 3. ORIENTATION FIX:
-    // Because webcam is mirrored, we invert X (1 - index.x)
+    // Mirror logic
     const x = (1 - index.x) * canvasRef.current.width;
     const y = index.y * canvasRef.current.height;
 
-    if (!prevPoint.current.x) {
-      prevPoint.current = { x, y };
-      return;
+    // Start drawing only if we have a previous point
+    if (prevPoint.current.x) {
+        drawLine({
+          x1: prevPoint.current.x,
+          y1: prevPoint.current.y,
+          x2: x,
+          y2: y,
+          color: colorRef.current,
+        });
+
+        socket.emit("draw_line", {
+          room,
+          x1: prevPoint.current.x,
+          y1: prevPoint.current.y,
+          x2: x,
+          y2: y,
+          color: colorRef.current,
+        });
     }
-
-    // Draw locally
-    drawLine({
-      x1: prevPoint.current.x,
-      y1: prevPoint.current.y,
-      x2: x,
-      y2: y,
-      color: colorRef.current,
-    });
-
-    // Send to server
-    socket.emit("draw_line", {
-      room,
-      x1: prevPoint.current.x,
-      y1: prevPoint.current.y,
-      x2: x,
-      y2: y,
-      color: colorRef.current,
-    });
 
     prevPoint.current = { x, y };
   };
@@ -204,30 +227,13 @@ function App() {
       </div>
 
       <div className="video-grid">
-        {/* MY VIDEO CONTAINER */}
         <div className="video-wrapper local">
-          <Webcam
-            ref={webcamRef}
-            mirrored={true}
-            className="webcam"
-          />
-          <canvas
-            ref={canvasRef}
-            width={640}
-            height={480}
-            className="canvas"
-          />
+          <Webcam ref={webcamRef} mirrored={true} className="webcam" />
+          <canvas ref={canvasRef} width={640} height={480} className="canvas" />
           <p className="label">You</p>
         </div>
-
-        {/* FRIEND VIDEO CONTAINER */}
         <div className="video-wrapper remote">
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className="remote-video"
-          />
+          <video ref={remoteVideoRef} autoPlay playsInline className="remote-video" />
           <p className="label">Friend</p>
         </div>
       </div>
