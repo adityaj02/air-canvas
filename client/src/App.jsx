@@ -6,8 +6,7 @@ import "./App.css";
 
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 
-// FIXED: Socket Connection Logic
-// We allow 'polling' first to wake up Render, then upgrade to 'websocket'
+// FIXED: Socket Connection (Polling first prevents 404/Connection errors)
 const socket = io(SERVER_URL, {
   transports: ['polling', 'websocket'], 
   reconnection: true,
@@ -15,7 +14,7 @@ const socket = io(SERVER_URL, {
   reconnectionDelay: 1000,
 });
 
-// Smooth interpolation
+// Smooth interpolation for drawing
 const lerp = (a, b, t) => a + (b - a) * t;
 
 function App() {
@@ -42,7 +41,6 @@ function App() {
   const colorRef = useRef(penColor);
   const lastEmitRef = useRef(0);
   const mediaStreamRef = useRef(null);
-  const animationFrameRef = useRef(null);
 
   // Premium color options
   const colorOptions = [
@@ -54,8 +52,6 @@ function App() {
     { name: "Ocean Cyan", value: "#4dffff", gradient: "linear-gradient(135deg, #4dffff, #33cccc)" },
     { name: "Pure White", value: "#ffffff", gradient: "linear-gradient(135deg, #ffffff, #f0f0f0)" },
     { name: "Deep Black", value: "#000000", gradient: "linear-gradient(135deg, #000000, #333333)" },
-    { name: "Gold", value: "#ffd700", gradient: "linear-gradient(135deg, #ffd700, #ffaa00)" },
-    { name: "Purple", value: "#9b59b6", gradient: "linear-gradient(135deg, #9b59b6, #8e44ad)" },
   ];
 
   const penSizes = [2, 4, 6, 8, 10, 12];
@@ -113,6 +109,7 @@ function App() {
 
     setConnectionStatus("connecting");
 
+    // Initialize PeerJS
     const peer = new Peer(undefined, {
       host: "air-canvas-2sga.onrender.com",
       secure: true,
@@ -137,7 +134,7 @@ function App() {
     peer.on("call", async (call) => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: 1280, height: 720 }, // Standard HD for transmission
+          video: { width: 1280, height: 720 },
           audio: true 
         });
         mediaStreamRef.current = stream;
@@ -165,7 +162,7 @@ function App() {
       socket.off("receive_draw");
       socket.off("clear_canvas");
       socket.off("user_connected");
-      peerRef.current?.destroy();
+      if(peerRef.current) peerRef.current.destroy();
       if(cameraRef.current) cameraRef.current.stop();
     };
   }, [joined]);
@@ -174,6 +171,7 @@ function App() {
       MEDIAPIPE SETUP
   ======================= */
   const startMediaPipe = async () => {
+    // Wait for global script from index.html
     let tries = 0;
     while (!window.Hands && tries < 20) {
       await new Promise(r => setTimeout(r, 500));
@@ -195,7 +193,7 @@ function App() {
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    // Use a high res logic for detection, but map to container size later
+    // Use Camera utility
     if (webcamRef.current?.video) {
         const camera = new window.Camera(webcamRef.current.video, {
             onFrame: async () => {
@@ -212,7 +210,7 @@ function App() {
   };
 
   /* =======================
-      DRAWING LOGIC
+      DRAWING LOGIC (PINCH TO DRAW)
   ======================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
@@ -226,13 +224,15 @@ function App() {
     lastEmitRef.current = now;
 
     const lm = results.multiHandLandmarks[0];
-    const index = lm[8];
-    const thumb = lm[4];
+    const index = lm[8]; // Index finger tip
+    const thumb = lm[4]; // Thumb tip
 
-    // Pinch Detection
-    const pinch = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+    // 1. PINCH DETECTION LOGIC
+    // Calculate distance between Index and Thumb
+    const pinchDist = Math.hypot(index.x - thumb.x, index.y - thumb.y);
     
-    if (pinch > 0.08) {
+    // Threshold: if > 0.08, fingers are apart -> STOP drawing
+    if (pinchDist > 0.08) {
       prevPoint.current = null;
       setIsDrawing(false);
       return;
@@ -240,15 +240,16 @@ function App() {
 
     setIsDrawing(true);
     
-    // Mapping Logic: Convert MediaPipe (0-1) to Container Pixels
+    // 2. COORDINATE MAPPING
     const { width, height } = containerSize;
     
-    // Mirror X (1 - index.x)
+    // Mirror X (1 - index.x) for natural feel
+    // These are local coordinates relative to the canvas size
     const x = (1 - index.x) * width;
     const y = index.y * height;
 
     if (prevPoint.current) {
-      // Smoothing
+      // 3. SMOOTHING (Lerp)
       const nx = lerp(prevPoint.current.x, x, 0.3);
       const ny = lerp(prevPoint.current.y, y, 0.3);
 
@@ -304,6 +305,10 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
+  const switchView = () => {
+    setMainView(prev => prev === "local" ? "remote" : "local");
+  };
+
   /* =======================
       UI RENDER
   ======================= */
@@ -354,7 +359,7 @@ function App() {
               ref={webcamRef} 
               mirrored 
               className="main-video"
-              // Force Webcam to fill the 21:9 container
+              // Force Webcam to fill the 21:9 container completely
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
           ) : (
@@ -400,6 +405,9 @@ function App() {
             <h3>Actions</h3>
             <button className="action-btn" onClick={() => { clearCanvasLocal(); socket.emit("clear_canvas", {room}); }}>
                 🗑️ Clear
+            </button>
+            <button className="action-btn" onClick={switchView}>
+                {mainView === "local" ? "👁️ View Friend" : "📹 View Self"}
             </button>
             <button className="action-btn" onClick={() => setShowInvite(true)}>
                 👥 Invite
