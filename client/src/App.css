@@ -1,63 +1,188 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+/* =========================================
+   GLOBAL RESET & BASE STYLES
+   ========================================= */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #1a1a1a; /* Dark background */
+  color: #ffffff;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  overflow-x: hidden;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+h2, h3 {
+  margin: 0;
+  font-weight: 500;
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* =========================================
+   JOIN SCREEN (Login)
+   ========================================= */
+.join-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 20px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+.join-screen input {
+  padding: 12px 20px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid #444;
+  background: #333;
+  color: white;
+  width: 250px;
+  outline: none;
 }
 
-.card {
-  padding: 2em;
+.join-screen button {
+  padding: 12px 30px;
+  font-size: 16px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.3s;
 }
 
-.read-the-docs {
-  color: #888;
+.join-screen button:hover {
+  background-color: #0056b3;
 }
-.canvas-container {
-  position: relative;
+
+/* =========================================
+   MAIN APP CONTAINER
+   ========================================= */
+.main-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  min-height: 100vh;
+}
+
+/* Controls Header (Room ID & Clear Button) */
+.controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 1300px;
+  margin-bottom: 20px;
+  background: #2a2a2a;
+  padding: 15px 25px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.clear-btn {
+  background-color: #ff4d4d;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.clear-btn:hover {
+  background-color: #cc0000;
+}
+
+/* =========================================
+   VIDEO GRID LAYOUT
+   ========================================= */
+.video-grid {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap; /* Allows stacking on smaller screens */
+  width: 100%;
+}
+
+/* WRAPPER: The most important part! 
+   It holds the webcam and canvas together.
+*/
+.video-wrapper {
+  position: relative; /* Parent must be relative */
   width: 640px;
   height: 480px;
-  margin: 0 auto;
+  background-color: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid #444;
+  box-shadow: 0 8px 16px rgba(0,0,0,0.5);
 }
 
-.input_video {
+/* =========================================
+   VIDEO & CANVAS OVERLAY LOGIC
+   ========================================= */
+
+/* 1. The Webcam Video */
+.webcam {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 0;
-  transform: scaleX(-1); /* Mirror effect */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1; /* Bottom layer */
 }
 
-.output_canvas {
+/* 2. The Drawing Canvas */
+.canvas {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 1; /* Drawing sits on top of video */
+  width: 100%;
+  height: 100%;
+  z-index: 10; /* Top layer - Must be higher than video! */
+  /* pointer-events: none; Optional: uncomment if mouse interferes */
+}
+
+/* 3. The Friend's Video */
+.remote-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-color: #222; /* Placeholder color before video loads */
+}
+
+/* =========================================
+   LABELS (You / Friend)
+   ========================================= */
+.label {
+  position: absolute;
+  bottom: 15px;
+  left: 15px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 20; /* Highest priority */
+  pointer-events: none;
+}
+
+/* =========================================
+   RESPONSIVENESS (Mobile/Tablet)
+   ========================================= */
+@media (max-width: 1350px) {
+  /* Stack videos vertically if screen is too narrow */
+  .video-grid {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 700px) {
+  /* Shrink video boxes for mobile */
+  .video-wrapper {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4/3;
+  }
 }
