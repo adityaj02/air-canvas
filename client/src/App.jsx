@@ -7,6 +7,10 @@ import "./App.css";
 const SERVER_URL = "https://air-canvas-2sga.onrender.com";
 const socket = io(SERVER_URL);
 
+// SMOOTHING FUNCTION (Linear Interpolation)
+// 'amt' determines lag vs smoothness. 0.5 is a good balance.
+const lerp = (start, end, amt) => (1 - amt) * start + amt * end;
+
 function App() {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -14,8 +18,9 @@ function App() {
 
   const [room, setRoom] = useState("");
   const [joined, setJoined] = useState(false);
-  const [role, setRole] = useState("guest"); // host | guest
+  const [mainView, setMainView] = useState("remote"); // 'local' or 'remote'
   const [penColor, setPenColor] = useState("#ff4d4d");
+  const [hasRemoteStream, setHasRemoteStream] = useState(false);
 
   const prevPoint = useRef({ x: 0, y: 0 });
   const colorRef = useRef(penColor);
@@ -51,13 +56,15 @@ function App() {
         .then((stream) => {
           call.answer(stream);
           call.on("stream", (remoteStream) => {
-            remoteVideoRef.current.srcObject = remoteStream;
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = remoteStream;
+              setHasRemoteStream(true);
+            }
           });
         });
     });
 
     socket.on("user_connected", (peerId) => {
-      setRole("host");          // first user becomes host
       callUser(peerId);
     });
 
@@ -75,7 +82,7 @@ function App() {
   }, [joined]);
 
   /* =========================
-     MEDIA PIPE
+     MEDIA PIPE (SENSITIVITY FIX)
   ========================= */
   const startMediaPipe = async () => {
     let tries = 0;
@@ -92,48 +99,65 @@ function App() {
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minDetectionConfidence: 0.7, // INCREASED for less hair detection
+      minTrackingConfidence: 0.7,  // INCREASED for stability
     });
 
     hands.onResults(onResults);
     handsRef.current = hands;
 
-    const camera = new window.Camera(webcamRef.current.video, {
-      onFrame: async () => {
-        await hands.send({ image: webcamRef.current.video });
-      },
-      width: 640,
-      height: 480,
-    });
-
-    camera.start();
+    if (webcamRef.current && webcamRef.current.video) {
+      const camera = new window.Camera(webcamRef.current.video, {
+        onFrame: async () => {
+          if(webcamRef.current?.video) {
+            await hands.send({ image: webcamRef.current.video });
+          }
+        },
+        width: 640,
+        height: 480,
+      });
+      camera.start();
+    }
   };
 
   /* =========================
-     DRAWING
+     DRAWING (SMOOTHING FIX)
   ========================= */
   const onResults = (results) => {
     if (!results.multiHandLandmarks?.length) {
+      // If hand is lost, reset smoothing
       prevPoint.current = { x: 0, y: 0 };
       return;
     }
 
+    // Rate limiting to prevent flooding socket
     const now = Date.now();
-    if (now - lastEmitRef.current < 25) return;
+    if (now - lastEmitRef.current < 20) return;
     lastEmitRef.current = now;
 
-    const index = results.multiHandLandmarks[0][8];
-    const x = (1 - index.x) * canvasRef.current.width;
-    const y = index.y * canvasRef.current.height;
+    const index = results.multiHandLandmarks[0][8]; // Index Finger Tip
+    
+    // Calculate raw coordinates
+    const width = canvasRef.current.width;
+    const height = canvasRef.current.height;
+    const rawX = (1 - index.x) * width;
+    const rawY = index.y * height;
+
+    // --- SMOOTHING LOGIC ---
+    let newX = rawX;
+    let newY = rawY;
 
     if (prevPoint.current.x !== 0) {
+      // Apply Lerp: 0.5 means move 50% towards the new point (smoother)
+      newX = lerp(prevPoint.current.x, rawX, 0.4);
+      newY = lerp(prevPoint.current.y, rawY, 0.4);
+
       const payload = {
         room,
         x1: prevPoint.current.x,
         y1: prevPoint.current.y,
-        x2: x,
-        y2: y,
+        x2: newX,
+        y2: newY,
         color: colorRef.current,
       };
 
@@ -141,23 +165,26 @@ function App() {
       socket.emit("draw_line", payload);
     }
 
-    prevPoint.current = { x, y };
+    prevPoint.current = { x: newX, y: newY };
   };
 
   const drawLine = ({ x1, y1, x2, y2, color }) => {
-    const ctx = canvasRef.current.getContext("2d");
+    const ctx = canvasRef.current?.getContext("2d");
+    if(!ctx) return;
+    
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 4;
     ctx.lineCap = "round";
+    ctx.lineJoin = "round"; // Smoother corners
     ctx.stroke();
   };
 
   const clearCanvasLocal = () => {
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const ctx = canvasRef.current?.getContext("2d");
+    if(ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
   };
 
   const broadcastClear = () => {
@@ -170,9 +197,17 @@ function App() {
       .then((stream) => {
         const call = peerRef.current.call(peerId, stream);
         call.on("stream", (remoteStream) => {
-          remoteVideoRef.current.srcObject = remoteStream;
+          if(remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            setHasRemoteStream(true);
+            setMainView("remote"); // Switch to remote view when friend joins
+          }
         });
       });
+  };
+
+  const swapViews = () => {
+    setMainView(prev => prev === "local" ? "remote" : "local");
   };
 
   /* =========================
@@ -194,57 +229,65 @@ function App() {
   }
 
   /* =========================
-     UI
+     UI RENDER
   ========================= */
   return (
     <div className="main-container">
-      {/* TOP BAR WITH CLEAR BUTTON */}
+      {/* TOP BAR */}
       <div className="top-bar">
         <div className="logo">Air Canvas</div>
-
         <div className="top-actions">
           <input
             type="color"
             value={penColor}
             onChange={(e) => setPenColor(e.target.value)}
             className="color-picker"
-            title="Pen color"
           />
-
-          <button
-            className="clear-btn"
-            onClick={broadcastClear}
-            title="Clear canvas"
-          >
+          <button className="clear-btn" onClick={broadcastClear}>
             Clear
           </button>
         </div>
       </div>
 
-      {/* MAIN STAGE */}
-      <div className="stage">
-        {/* MAIN */}
-        <div className="stage-main">
-          {role === "host"
-            ? <video ref={remoteVideoRef} autoPlay playsInline className="stage-video" />
-            : <>
-                <Webcam ref={webcamRef} mirrored className="stage-video" />
-                <canvas ref={canvasRef} width={640} height={480} className="canvas" />
-              </>
-          }
-          <span className="stage-label">{role === "host" ? "FRIEND" : "ME"}</span>
-        </div>
+      {/* STAGE AREA (Constrained Size) */}
+      <div className="stage-container">
+        <div className="stage-wrapper">
+          
+          {/* SHARED CANVAS OVERLAY (Always on top) */}
+          <canvas 
+            ref={canvasRef} 
+            width={640} 
+            height={480} 
+            className="canvas-overlay" 
+          />
 
-        {/* PIP */}
-        <div className="stage-pip">
-          {role === "host"
-            ? <>
-                <Webcam ref={webcamRef} mirrored className="pip-video" />
-                <canvas ref={canvasRef} width={640} height={480} className="canvas pip-canvas" />
-              </>
-            : <video ref={remoteVideoRef} autoPlay playsInline className="pip-video" />
-          }
-          <span className="pip-label">{role === "host" ? "ME" : "FRIEND"}</span>
+          {/* MAIN VIEW */}
+          <div className="main-view">
+            {/* Logic: If mainView is local, show webcam. Else show remote. */}
+            <div className={mainView === "local" ? "video-content visible" : "video-content hidden"}>
+               <Webcam ref={webcamRef} mirrored className="video-feed" />
+               <span className="label">ME</span>
+            </div>
+            
+            <div className={mainView === "remote" ? "video-content visible" : "video-content hidden"}>
+               <video ref={remoteVideoRef} autoPlay playsInline className="video-feed" />
+               {!hasRemoteStream && <div className="waiting-msg">Waiting for friend...</div>}
+               <span className="label">FRIEND</span>
+            </div>
+          </div>
+
+          {/* PIP VIEW (Click to Swap) */}
+          <div className="pip-view" onClick={swapViews} title="Click to Swap">
+             {/* Logic: Show whichever is NOT main */}
+             <div className={mainView === "remote" ? "video-content visible" : "video-content hidden"}>
+               <Webcam mirrored className="video-feed" />
+            </div>
+            
+            <div className={mainView === "local" ? "video-content visible" : "video-content hidden"}>
+               <video ref={remoteVideoRef} autoPlay playsInline className="video-feed" />
+            </div>
+          </div>
+
         </div>
       </div>
 
