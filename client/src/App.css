@@ -40,3 +40,17 @@
   height: 100%;
   z-index: 10; /* Above video */
 }
+.join-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 20px;
+  text-align: center;
+}
+
+.join-screen input {
+  width: 260px;
+  text-align: center;
+}

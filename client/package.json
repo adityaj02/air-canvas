@@ -13,11 +13,14 @@
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/drawing_utils": "^0.3.1675466124",
     "@mediapipe/hands": "^0.4.1675469240",
+    "@tailwindcss/vite": "^4.1.18",
     "peerjs": "^1.5.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-icons": "^5.5.0",
     "react-webcam": "^7.2.0",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
