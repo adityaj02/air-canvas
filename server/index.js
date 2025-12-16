@@ -46,7 +46,7 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: false,
   },
-  transports: ["websocket", "polling"],
+  transports: ["polling", "websocket"],
 });
 
 // In-memory store for room tracking (Consider Redis for scaling later)

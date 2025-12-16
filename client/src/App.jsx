@@ -17,10 +17,13 @@ const COLORS = ["#ff4d4d", "#4dff4d", "#4d4dff", "#ffff4d", "#ff4dff", "#ffffff"
 const SIZES = [4, 8, 12];
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// Initialize socket ONCE
+// ✅ FIXED SOCKET CONFIG (FRONTEND ONLY)
 const socket = io(SERVER_URL, {
-  transports: ["websocket", "polling"],
-  reconnectionAttempts: 5,
+  transports: ["polling", "websocket"], // IMPORTANT ORDER
+  upgrade: true,
+  reconnection: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 1000,
 });
 
 function App() {
@@ -36,6 +39,7 @@ function App() {
   const lastEmitRef = useRef(0);
   const smoothedPos = useRef({ x: 0, y: 0 });
 
+  // kept intentionally
   // eslint-disable-next-line no-unused-vars
   const callsRef = useRef([]);
 
@@ -62,7 +66,6 @@ function App() {
     if (!canvas) return;
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
     ctx.beginPath();
     ctx.moveTo(data.x1 * canvas.width, data.y1 * canvas.height);
     ctx.lineTo(data.x2 * canvas.width, data.y2 * canvas.height);
@@ -94,13 +97,8 @@ function App() {
       if (results.multiHandLandmarks?.length) {
         if (!handDetected) setHandDetected(true);
 
-        const [idxTip, , , , thumbTip] = [
-          results.multiHandLandmarks[0][8],
-          null,
-          null,
-          null,
-          results.multiHandLandmarks[0][4],
-        ];
+        const idxTip = results.multiHandLandmarks[0][8];
+        const thumbTip = results.multiHandLandmarks[0][4];
 
         const scale = Math.max(
           canvas.width / video.videoWidth,
@@ -120,11 +118,8 @@ function App() {
         const x = smoothedPos.current.x;
         const y = smoothedPos.current.y;
 
-        const dist = Math.hypot(
-          thumbTip.x - idxTip.x,
-          thumbTip.y - idxTip.y
-        );
-        const isPinching = dist < 0.08;
+        const isPinching =
+          Math.hypot(thumbTip.x - idxTip.x, thumbTip.y - idxTip.y) < 0.08;
 
         if (cursorRef.current) {
           cursorRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
@@ -233,8 +228,6 @@ function App() {
       handsRef.current?.close();
     };
   }, [joined, roomId, drawLine, clearCanvasLocal, startMediaPipe]);
-
-  // JSX BELOW IS UNCHANGED (UI IS EXACTLY SAME)
 
   if (!joined) {
     return (
