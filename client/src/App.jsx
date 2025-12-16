@@ -161,13 +161,17 @@ function App() {
       if (handDetected) setHandDetected(false);
       prevPoint.current = null;
     }
-  }, [drawLine, handDetected, roomId]); // Dependencies added
+  }, [drawLine, handDetected, roomId]); 
 
+  // --- FIXED: MediaPipe with Pinned Version URL ---
   const startMediaPipe = useCallback(async () => {
     if (!window.Hands) return;
 
     const hands = new window.Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      // This pins the assets to a specific version to prevent 404/Aborted errors
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+      },
     });
 
     hands.setOptions({
@@ -183,6 +187,7 @@ function App() {
     if (webcamRef.current) {
         const camera = new window.Camera(webcamRef.current, {
             onFrame: async () => {
+                // Ensure stream is active before sending
                 if(webcamRef.current && handsRef.current && webcamRef.current.readyState === 4) {
                     await handsRef.current.send({ image: webcamRef.current });
                 }
